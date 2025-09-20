@@ -39,10 +39,21 @@ const Index = () => {
               <span>AI Analyst</span>
             </Button>
             {hasData && (
-              <Button size="sm" className="flex items-center space-x-2">
-                <Download className="w-4 h-4" />
-                <span>Export Report</span>
-              </Button>
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setHasData(false)}
+                  className="flex items-center space-x-2"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>New Analysis</span>
+                </Button>
+                <Button size="sm" className="flex items-center space-x-2">
+                  <Download className="w-4 h-4" />
+                  <span>Export Report</span>
+                </Button>
+              </>
             )}
           </div>
         </div>
