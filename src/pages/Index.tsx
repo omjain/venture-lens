@@ -10,7 +10,7 @@ import BenchmarkChart from "@/components/dashboard/BenchmarkChart";
 import AIChat from "@/components/dashboard/AIChat";
 
 const Index = () => {
-  const [hasData, setHasData] = useState(true); // Set to true for demo
+  const [hasData, setHasData] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
 
   return (
