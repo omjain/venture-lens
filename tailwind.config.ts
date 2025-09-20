@@ -22,14 +22,21 @@ export default {
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+          soft: "hsl(var(--primary-soft))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
           foreground: "hsl(var(--secondary-foreground))",
         },
-        destructive: {
-          DEFAULT: "hsl(var(--destructive))",
-          foreground: "hsl(var(--destructive-foreground))",
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+          soft: "hsl(var(--success-soft))",
+        },
+        danger: {
+          DEFAULT: "hsl(var(--danger))",
+          foreground: "hsl(var(--danger-foreground))",
+          soft: "hsl(var(--danger-soft))",
         },
         muted: {
           DEFAULT: "hsl(var(--muted))",
@@ -46,6 +53,22 @@ export default {
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
+        },
+        dashboard: {
+          bg: "hsl(var(--dashboard-bg))",
+        },
+        upload: {
+          zone: "hsl(var(--upload-zone))",
+          border: "hsl(var(--upload-border))",
+        },
+        metric: {
+          positive: "hsl(var(--metric-positive))",
+          negative: "hsl(var(--metric-negative))",
+        },
+        heatmap: {
+          low: "hsl(var(--heatmap-low))",
+          medium: "hsl(var(--heatmap-medium))",
+          high: "hsl(var(--heatmap-high))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
