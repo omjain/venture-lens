@@ -1,5 +1,6 @@
 // API service for communicating with the backend
-const API_BASE_URL = 'http://localhost:3001';
+//use localhost:3001 as API_BASE when working on local
+const API_BASE_URL = 'https://venturelens.netlify.app/';
 
 export interface AnalysisRequest {
   startupName: string;
