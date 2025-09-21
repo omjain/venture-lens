@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { X, Send, Bot, User } from "lucide-react";
+import { X, Send, Bot, User, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { apiService } from "@/services/api";
+import { useStartup } from "@/contexts/StartupContext";
 
 interface AIChatProps {
   isOpen: boolean;
@@ -17,6 +19,7 @@ interface Message {
 
 const AIChat = ({ isOpen, onClose }: AIChatProps) => {
   const [message, setMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 1,
@@ -25,6 +28,8 @@ const AIChat = ({ isOpen, onClose }: AIChatProps) => {
     }
   ]);
 
+  const { startupData, analysis } = useStartup();
+
   const suggestedQuestions = [
     "What are the biggest red flags?",
     "How does this compare to competitors?",
@@ -32,8 +37,8 @@ const AIChat = ({ isOpen, onClose }: AIChatProps) => {
     "Should we proceed with investment?"
   ];
 
-  const handleSend = () => {
-    if (!message.trim()) return;
+  const handleSend = async () => {
+    if (!message.trim() || isLoading) return;
 
     const userMessage: Message = {
       id: messages.length + 1,
@@ -41,14 +46,43 @@ const AIChat = ({ isOpen, onClose }: AIChatProps) => {
       content: message
     };
 
-    const assistantMessage: Message = {
-      id: messages.length + 2,
-      type: "assistant",
-      content: "Based on my analysis of NeuralFlow AI, I can provide detailed insights. This is a demo response - in a real implementation, this would connect to an AI service to provide comprehensive answers about the startup's investment potential, market position, and risk factors."
-    };
-
-    setMessages([...messages, userMessage, assistantMessage]);
+    setMessages(prev => [...prev, userMessage]);
     setMessage("");
+    setIsLoading(true);
+
+    try {
+      const conversationHistory = messages.map(msg => ({
+        role: msg.type as 'user' | 'assistant',
+        content: msg.content
+      }));
+
+      const response = await apiService.chatWithAI({
+        conversationHistory,
+        userQuestion: userMessage.content,
+        contextData: {
+          startupName: startupData?.name,
+          analysis: analysis
+        }
+      });
+
+      const assistantMessage: Message = {
+        id: messages.length + 2,
+        type: "assistant",
+        content: response.answer
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      console.error('Chat error:', error);
+      const errorMessage: Message = {
+        id: messages.length + 2,
+        type: "assistant",
+        content: "I apologize, but I'm having trouble processing your request right now. Please try again later."
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSuggestedQuestion = (question: string) => {
@@ -100,6 +134,21 @@ const AIChat = ({ isOpen, onClose }: AIChatProps) => {
               </div>
             </div>
           ))}
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="flex items-start space-x-2 max-w-[80%]">
+                <div className="w-6 h-6 rounded-full flex items-center justify-center bg-secondary">
+                  <Bot className="w-3 h-3 text-foreground" />
+                </div>
+                <div className="px-3 py-2 rounded-lg text-sm bg-secondary text-foreground">
+                  <div className="flex items-center space-x-2">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Thinking...</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Suggested Questions */}
@@ -130,8 +179,12 @@ const AIChat = ({ isOpen, onClose }: AIChatProps) => {
               onKeyPress={(e) => e.key === 'Enter' && handleSend()}
               className="flex-1"
             />
-            <Button size="sm" onClick={handleSend}>
-              <Send className="w-4 h-4" />
+            <Button size="sm" onClick={handleSend} disabled={isLoading || !message.trim()}>
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Send className="w-4 h-4" />
+              )}
             </Button>
           </div>
         </div>

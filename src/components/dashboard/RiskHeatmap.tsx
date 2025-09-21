@@ -1,13 +1,29 @@
 import { Card } from "@/components/ui/card";
+import { useStartup } from "@/contexts/StartupContext";
+import { Loader2 } from "lucide-react";
 
 const RiskHeatmap = () => {
-  const riskCategories = [
-    { name: "Team", score: 2, description: "Strong leadership & experience" },
-    { name: "Market", score: 6, description: "Competitive but growing market" },
-    { name: "Product", score: 3, description: "Strong differentiation & IP" },
-    { name: "Traction", score: 4, description: "Good early customer adoption" },
-    { name: "Moat", score: 5, description: "Technology advantage present" }
-  ];
+  const { analysis, isLoading } = useStartup();
+  
+  if (!analysis || !analysis.riskMRI) {
+    return (
+      <Card className="p-6">
+        <div className="flex items-center justify-center h-32">
+          {isLoading ? (
+            <div className="flex items-center space-x-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-muted-foreground">Analyzing risks...</span>
+            </div>
+          ) : (
+            <p className="text-muted-foreground">No risk analysis available</p>
+          )}
+        </div>
+      </Card>
+    );
+  }
+
+  const riskCategories = analysis.riskMRI.categories;
+  const overallScore = analysis.riskMRI.overallScore;
 
   const getRiskColor = (score: number) => {
     if (score <= 3) return "bg-success text-success-foreground";
@@ -84,7 +100,12 @@ const RiskHeatmap = () => {
           
           <div className="text-right">
             <div className="font-semibold text-foreground">Overall Risk Score</div>
-            <div className="text-lg font-bold text-yellow-600">4.0/10</div>
+            <div className={`text-lg font-bold ${
+              overallScore <= 3 ? "text-success" :
+              overallScore <= 6 ? "text-yellow-600" : "text-danger"
+            }`}>
+              {overallScore}/10
+            </div>
           </div>
         </div>
       </div>

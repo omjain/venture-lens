@@ -1,6 +1,11 @@
 import { useState } from "react";
-import { Upload, FileText, File, Mail } from "lucide-react";
+import { Upload, FileText, File, Mail, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useStartup } from "@/contexts/StartupContext";
 
 interface UploadZoneProps {
   onUpload: () => void;
@@ -8,6 +13,15 @@ interface UploadZoneProps {
 
 const UploadZone = ({ onUpload }: UploadZoneProps) => {
   const [isDragActive, setIsDragActive] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [formData, setFormData] = useState({
+    startupName: '',
+    deckText: '',
+    transcriptText: '',
+    publicUrls: '',
+  });
+  
+  const { analyzeStartup, isLoading, error } = useStartup();
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -22,14 +36,124 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragActive(false);
-    // Simulate file upload
-    setTimeout(() => onUpload(), 1500);
+    setShowForm(true);
   };
 
   const handleFileSelect = () => {
-    // Simulate file upload
-    setTimeout(() => onUpload(), 1500);
+    setShowForm(true);
   };
+
+  const handleAnalyze = async () => {
+    if (!formData.startupName.trim()) {
+      alert('Please enter a startup name');
+      return;
+    }
+
+    const publicUrls = formData.publicUrls
+      .split('\n')
+      .map(url => url.trim())
+      .filter(url => url.length > 0);
+
+    try {
+      await analyzeStartup({
+        startupName: formData.startupName,
+        deckText: formData.deckText || undefined,
+        transcriptText: formData.transcriptText || undefined,
+        publicUrls: publicUrls.length > 0 ? publicUrls : undefined,
+      });
+      onUpload();
+    } catch (err) {
+      console.error('Analysis failed:', err);
+    }
+  };
+
+  if (showForm) {
+    return (
+      <Card className="w-full max-w-2xl">
+        <div className="p-6">
+          <h3 className="text-xl font-semibold text-foreground mb-6">
+            Analyze Startup
+          </h3>
+          
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="startupName">Startup Name *</Label>
+              <Input
+                id="startupName"
+                value={formData.startupName}
+                onChange={(e) => setFormData(prev => ({ ...prev, startupName: e.target.value }))}
+                placeholder="Enter startup name"
+                className="mt-1"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="deckText">Pitch Deck Content</Label>
+              <Textarea
+                id="deckText"
+                value={formData.deckText}
+                onChange={(e) => setFormData(prev => ({ ...prev, deckText: e.target.value }))}
+                placeholder="Paste pitch deck content here..."
+                className="mt-1 min-h-[100px]"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="transcriptText">Interview/Transcript</Label>
+              <Textarea
+                id="transcriptText"
+                value={formData.transcriptText}
+                onChange={(e) => setFormData(prev => ({ ...prev, transcriptText: e.target.value }))}
+                placeholder="Paste founder interview or transcript here..."
+                className="mt-1 min-h-[100px]"
+              />
+            </div>
+
+            <div>
+              <Label htmlFor="publicUrls">Public URLs (one per line)</Label>
+              <Textarea
+                id="publicUrls"
+                value={formData.publicUrls}
+                onChange={(e) => setFormData(prev => ({ ...prev, publicUrls: e.target.value }))}
+                placeholder="https://example.com/news&#10;https://crunchbase.com/company/startup"
+                className="mt-1 min-h-[80px]"
+              />
+            </div>
+
+            {error && (
+              <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
+                <p className="text-sm text-destructive">{error}</p>
+              </div>
+            )}
+
+            <div className="flex space-x-3 pt-4">
+              <Button
+                onClick={handleAnalyze}
+                disabled={isLoading || !formData.startupName.trim()}
+                className="flex-1"
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  'Analyze Startup'
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowForm(false)}
+                disabled={isLoading}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card className="w-full max-w-2xl">

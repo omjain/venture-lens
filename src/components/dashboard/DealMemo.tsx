@@ -1,31 +1,31 @@
-import { Star, AlertTriangle, CheckCircle } from "lucide-react";
+import { Star, AlertTriangle, CheckCircle, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useStartup } from "@/contexts/StartupContext";
 
 const DealMemo = () => {
-  const strengths = [
-    "Strong product-market fit with 95% NPS",
-    "Experienced team from Google & Meta",
-    "Proprietary AI technology advantage",
-    "Rapid customer acquisition growth",
-    "Clear path to profitability"
-  ];
+  const { analysis, isLoading } = useStartup();
 
-  const risks = [
-    "High customer concentration risk",
-    "Competitive market landscape", 
-    "Regulatory uncertainty in AI",
-    "Dependency on cloud infrastructure",
-    "Limited international presence"
-  ];
+  if (!analysis) {
+    return (
+      <Card className="p-6">
+        <div className="flex items-center justify-center h-32">
+          {isLoading ? (
+            <div className="flex items-center space-x-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-muted-foreground">Analyzing...</span>
+            </div>
+          ) : (
+            <p className="text-muted-foreground">No analysis available</p>
+          )}
+        </div>
+      </Card>
+    );
+  }
 
-  const nextSteps = [
-    "Technical due diligence review",
-    "Reference calls with top customers",
-    "Market size validation study",
-    "Legal and IP assessment",
-    "Financial model deep-dive"
-  ];
+  const strengths = analysis.strengths || [];
+  const risks = analysis.risks || [];
+  const nextSteps = analysis.nextSteps || [];
 
   return (
     <Card className="p-6">

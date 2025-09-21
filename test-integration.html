@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frontend-Backend Integration Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 5px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        .loading { background-color: #fff3cd; border-color: #ffeaa7; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 3px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>🚀 Frontend-Backend Integration Test</h1>
+    
+    <div class="test-section">
+        <h2>Backend Health Check</h2>
+        <button onclick="testHealth()">Test Backend Health</button>
+        <div id="health-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Startup Analysis Test</h2>
+        <button onclick="testAnalysis()">Test Analysis Endpoint</button>
+        <div id="analysis-result"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>AI Chat Test</h2>
+        <button onclick="testChat()">Test Chat Endpoint</button>
+        <div id="chat-result"></div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:3001';
+        
+        async function testHealth() {
+            const resultDiv = document.getElementById('health-result');
+            resultDiv.innerHTML = '<div class="loading">Testing backend health...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/health`);
+                const data = await response.json();
+                
+                resultDiv.innerHTML = `
+                    <div class="success">
+                        <h3>✅ Backend is healthy!</h3>
+                        <pre>${JSON.stringify(data, null, 2)}</pre>
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Backend health check failed</h3>
+                        <p>Error: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testAnalysis() {
+            const resultDiv = document.getElementById('analysis-result');
+            resultDiv.innerHTML = '<div class="loading">Testing analysis endpoint...</div>';
+            
+            try {
+                const testData = {
+                    startupName: "TestFlow AI",
+                    deckText: "We are building the next generation of AI-powered analytics for supply chain optimization. Our platform helps companies reduce costs by 30% and improve efficiency.",
+                    transcriptText: "Our team has 10 years of experience in machine learning and we've already signed 5 enterprise customers.",
+                    publicUrls: ["https://example.com/news"]
+                };
+
+                const response = await fetch(`${API_BASE}/api/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(testData)
+                });
+                
+                const data = await response.json();
+                
+                resultDiv.innerHTML = `
+                    <div class="success">
+                        <h3>✅ Analysis successful!</h3>
+                        <h4>Summary:</h4>
+                        <p>${data.summary}</p>
+                        <h4>Deal Score: ${data.dealScore}/10</h4>
+                        <h4>Strengths:</h4>
+                        <ul>${data.strengths.map(s => `<li>${s}</li>`).join('')}</ul>
+                        <h4>Risks:</h4>
+                        <ul>${data.risks.map(r => `<li>${r}</li>`).join('')}</ul>
+                        <h4>Next Steps:</h4>
+                        <ul>${data.nextSteps.map(n => `<li>${n}</li>`).join('')}</ul>
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Analysis test failed</h3>
+                        <p>Error: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function testChat() {
+            const resultDiv = document.getElementById('chat-result');
+            resultDiv.innerHTML = '<div class="loading">Testing chat endpoint...</div>';
+            
+            try {
+                const testData = {
+                    conversationHistory: [
+                        { role: "user", content: "What are the main risks for this startup?" }
+                    ],
+                    userQuestion: "How can we mitigate these risks?",
+                    contextData: {
+                        startupName: "TestFlow AI",
+                        industry: "AI Analytics"
+                    }
+                };
+
+                const response = await fetch(`${API_BASE}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(testData)
+                });
+                
+                const data = await response.json();
+                
+                resultDiv.innerHTML = `
+                    <div class="success">
+                        <h3>✅ Chat successful!</h3>
+                        <h4>AI Response:</h4>
+                        <p>${data.answer}</p>
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        <h3>❌ Chat test failed</h3>
+                        <p>Error: ${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Auto-run health check on page load
+        window.onload = () => {
+            testHealth();
+        };
+    </script>
+</body>
+</html>

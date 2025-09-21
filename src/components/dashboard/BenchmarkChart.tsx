@@ -1,39 +1,32 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useStartup } from "@/contexts/StartupContext";
+import { Loader2 } from "lucide-react";
 
 const BenchmarkChart = () => {
-  const metrics = [
-    {
-      name: "Revenue Growth",
-      company: 85,
-      peers: [45, 62, 38],
-      unit: "%",
-      higher: true
-    },
-    {
-      name: "Gross Margin", 
-      company: 78,
-      peers: [72, 68, 75],
-      unit: "%",
-      higher: true
-    },
-    {
-      name: "CAC Payback",
-      company: 8,
-      peers: [12, 15, 10],
-      unit: "months",
-      higher: false
-    },
-    {
-      name: "Net Retention",
-      company: 115,
-      peers: [105, 98, 112],
-      unit: "%", 
-      higher: true
-    }
-  ];
+  const { analysis, isLoading } = useStartup();
+  
+  if (!analysis || !analysis.peerBenchmark) {
+    return (
+      <Card className="p-6">
+        <div className="flex items-center justify-center h-32">
+          {isLoading ? (
+            <div className="flex items-center space-x-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-muted-foreground">Analyzing benchmarks...</span>
+            </div>
+          ) : (
+            <p className="text-muted-foreground">No benchmark analysis available</p>
+          )}
+        </div>
+      </Card>
+    );
+  }
 
-  const peerCompanies = ["Competitor A", "Competitor B", "Competitor C"];
+  const metrics = analysis.peerBenchmark.metrics;
+  const peerCompanies = analysis.peerBenchmark.peerCompanies;
+  const outperformingCount = analysis.peerBenchmark.outperformingCount;
+  const percentileRank = analysis.peerBenchmark.percentileRank;
 
   const getPerformanceColor = (companyValue: number, peerAverage: number, higherIsBetter: boolean) => {
     const isPerforming = higherIsBetter ? companyValue > peerAverage : companyValue < peerAverage;
@@ -49,7 +42,7 @@ const BenchmarkChart = () => {
         </p>
         
         <div className="flex flex-wrap gap-2">
-          <Badge variant="default">NeuralFlow AI</Badge>
+          <Badge variant="default">Your Company</Badge>
           {peerCompanies.map((peer, index) => (
             <Badge key={index} variant="outline">{peer}</Badge>
           ))}
@@ -118,11 +111,11 @@ const BenchmarkChart = () => {
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
             <div className="font-semibold text-success">Outperforming</div>
-            <div className="text-muted-foreground">3 of 4 metrics</div>
+            <div className="text-muted-foreground">{outperformingCount} of {metrics.length} metrics</div>
           </div>
           <div className="text-right">
             <div className="font-semibold text-foreground">Percentile Rank</div>
-            <div className="text-lg font-bold text-primary">78th</div>
+            <div className="text-lg font-bold text-primary">{percentileRank}th</div>
           </div>
         </div>
       </div>
