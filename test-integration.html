@@ -37,7 +37,7 @@
 
     <script>
         //use localhost:3001 as API_BASE when working on local
-        const API_BASE = 'https://venturelens.netlify.app/';
+        const API_BASE = 'https://venturelens.netlify.app/' || 'http://localhost:3001';
         
         async function testHealth() {
             const resultDiv = document.getElementById('health-result');

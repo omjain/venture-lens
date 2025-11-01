@@ -42,16 +42,8 @@ function validateAnalyzeRequest(req, res, next) {
     }
   }
   
-  // Check if at least one data source is provided
-  const hasData = (deckText && deckText.trim().length > 0) ||
-                  (transcriptText && transcriptText.trim().length > 0) ||
-                  (publicUrls && publicUrls.length > 0);
-  
-  if (!hasData) {
-    return res.status(400).json({
-      error: 'At least one data source (deckText, transcriptText, or publicUrls) must be provided'
-    });
-  }
+  // Note: Data sources are optional - the AI can analyze with just a startup name
+  // If no data is provided, the analysis will be more limited but still possible
   
   // Sanitize and trim inputs
   req.body.startupName = startupName.trim();

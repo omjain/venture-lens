@@ -44,11 +44,15 @@ router.post('/', validateAnalyzeRequest, async (req, res) => {
  * Health check for analysis service
  */
 router.get('/health', (req, res) => {
+  const isConfigured = !!(process.env.GEMINI_API_KEY || 
+                          (process.env.GEMINI_PROJECT_ID && process.env.GEMINI_LOCATION));
   res.json({
     status: 'OK',
     service: 'analyze',
     timestamp: new Date().toISOString(),
-    geminiConfigured: !!process.env.GEMINI_API_KEY
+    geminiConfigured: isConfigured,
+    usingVertexAI: !!(process.env.GEMINI_PROJECT_ID && process.env.GEMINI_LOCATION),
+    usingGeminiAPI: !!process.env.GEMINI_API_KEY && !process.env.GEMINI_PROJECT_ID
   });
 });
 

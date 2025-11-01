@@ -1,6 +1,6 @@
 // API service for communicating with the backend
-//use localhost:3001 as API_BASE when working on local
-const API_BASE_URL = 'https://venturelens.netlify.app/';
+// Use VITE_API_URL if set, otherwise default to localhost for development
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 export interface AnalysisRequest {
   startupName: string;
@@ -9,12 +9,36 @@ export interface AnalysisRequest {
   publicUrls?: string[];
 }
 
+export interface RiskMRI {
+  categories: Array<{
+    name: string;
+    score: number;
+    description: string;
+  }>;
+  overallScore: number;
+}
+
+export interface PeerBenchmark {
+  metrics: Array<{
+    name: string;
+    company: number;
+    peers: number[];
+    unit: string;
+    higher: boolean;
+  }>;
+  peerCompanies: string[];
+  outperformingCount: number;
+  percentileRank: number;
+}
+
 export interface AnalysisResponse {
   summary: string;
   strengths: string[];
   risks: string[];
   nextSteps: string[];
   dealScore: number;
+  riskMRI?: RiskMRI;
+  peerBenchmark?: PeerBenchmark;
 }
 
 export interface ChatRequest {

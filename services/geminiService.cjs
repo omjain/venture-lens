@@ -1,11 +1,37 @@
 const axios = require('axios');
+const { GoogleAuth } = require('google-auth-library');
 
-// Gemini API configuration
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBvOkBwvFEXERujzA4xyedcwAb8RN6ICtZChyM8VmZ3Zl_MoQpeiFaUFy';
+// API configuration - supports both Vertex AI and Gemini API
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_PROJECT_ID = process.env.GEMINI_PROJECT_ID;
+const GEMINI_LOCATION = process.env.GEMINI_LOCATION || 'us-central1';
+
+// Determine which API to use
+const USE_VERTEX_AI = !!(GEMINI_PROJECT_ID && GEMINI_LOCATION);
+
+// Vertex AI endpoint
+const VERTEX_AI_BASE_URL = `https://${GEMINI_LOCATION}-aiplatform.googleapis.com/v1/projects/${GEMINI_PROJECT_ID}/locations/${GEMINI_LOCATION}/publishers/google/models/gemini-1.5-flash:generateContent`;
 
 // Gemini API base URL (using Google AI Studio API)
 const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+
+// Initialize Google Auth for Vertex AI (only if needed)
+let authClient = null;
+if (USE_VERTEX_AI) {
+  try {
+    authClient = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+    });
+    console.log('✅ Vertex AI authentication initialized');
+  } catch (error) {
+    console.warn('⚠️ Google Auth initialization failed. Make sure you have gcloud CLI installed or service account credentials configured.');
+    console.warn('   Run: gcloud auth application-default login');
+    console.warn('   The service will use mock responses until authentication is configured.');
+  }
+} else if (!GEMINI_API_KEY) {
+  console.log('ℹ️  No API credentials configured. Using intelligent mock responses.');
+  console.log('   To use real AI: Set GEMINI_PROJECT_ID + GEMINI_LOCATION (for Vertex AI) or GEMINI_API_KEY (for Gemini API)');
+}
 
 /**
  * System prompt for startup analysis
@@ -90,13 +116,30 @@ async function scrapePublicUrls(urls) {
 }
 
 /**
- * Calls Gemini API for startup analysis
+ * Gets access token for Vertex AI authentication
  */
-async function callGeminiAPI(prompt, systemPrompt) {
-  if (!GEMINI_API_KEY) {
-    throw new Error('Gemini API key not configured');
+async function getAccessToken() {
+  if (!authClient) {
+    throw new Error('Google Auth client not initialized. Please configure Vertex AI credentials and run: gcloud auth application-default login');
   }
   
+  try {
+    const client = await authClient.getClient();
+    const accessToken = await client.getAccessToken();
+    if (!accessToken) {
+      throw new Error('Failed to obtain access token');
+    }
+    return accessToken.token || accessToken;
+  } catch (error) {
+    console.error('Failed to get access token:', error.message);
+    throw new Error('Failed to authenticate with Vertex AI. Make sure you have run: gcloud auth application-default login');
+  }
+}
+
+/**
+ * Calls Gemini API (Vertex AI or Google AI Studio) for startup analysis
+ */
+async function callGeminiAPI(prompt, systemPrompt) {
   const requestBody = {
     contents: [{
       parts: [{
@@ -111,15 +154,37 @@ async function callGeminiAPI(prompt, systemPrompt) {
     }
   };
   
+  let url;
+  let headers = {
+    'Content-Type': 'application/json'
+  };
+  
+  // Use Vertex AI if project ID and location are configured
+  if (USE_VERTEX_AI) {
+    if (!authClient) {
+      throw new Error('Vertex AI credentials not properly configured. Please run: gcloud auth application-default login');
+    }
+    
+    url = VERTEX_AI_BASE_URL;
+    const accessToken = await getAccessToken();
+    headers['Authorization'] = `Bearer ${accessToken}`;
+    
+    console.log('🔐 Using Vertex AI endpoint');
+  } else if (GEMINI_API_KEY) {
+    // Fall back to Gemini API (Google AI Studio)
+    url = `${GEMINI_BASE_URL}?key=${GEMINI_API_KEY}`;
+    console.log('🔑 Using Gemini API (Google AI Studio)');
+  } else {
+    throw new Error('No API credentials configured. Please set GEMINI_API_KEY or GEMINI_PROJECT_ID + GEMINI_LOCATION');
+  }
+  
   try {
-    const response = await axios.post(`${GEMINI_BASE_URL}?key=${GEMINI_API_KEY}`, requestBody, {
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      timeout: 30000
+    const response = await axios.post(url, requestBody, {
+      headers,
+      timeout: 60000 // 60 seconds for Vertex AI
     });
     
-    // Handle the response from Google AI Studio API
+    // Handle the response (same format for both APIs)
     let fullText = '';
     
     if (response.data && response.data.candidates && response.data.candidates[0]) {
@@ -136,12 +201,17 @@ async function callGeminiAPI(prompt, systemPrompt) {
       return fullText.trim();
     } else {
       console.log('Full response:', JSON.stringify(response.data, null, 2));
-      throw new Error('No text content found in Gemini API response');
+      throw new Error('No text content found in API response');
     }
     
   } catch (error) {
-    console.error('Gemini API error:', error.response?.data || error.message);
-    throw new Error(`Gemini API call failed: ${error.message}`);
+    console.error('API error:', error.response?.data || error.message);
+    
+    if (USE_VERTEX_AI && error.response?.status === 401) {
+      throw new Error('Vertex AI authentication failed. Please run: gcloud auth application-default login');
+    }
+    
+    throw new Error(`API call failed: ${error.message}`);
   }
 }
 
