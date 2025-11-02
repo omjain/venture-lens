@@ -1,8 +1,8 @@
 {
+  "type": "module",
   "name": "ai-analyst-backend",
   "version": "1.0.0",
   "description": "AI Analyst for Startup Evaluation - Backend API",
-  "type": "module",
   "main": "index.cjs",
   "scripts": {
     "dev": "nodemon index.cjs",
@@ -24,6 +24,7 @@
   "author": "Venture Lens Team",
   "license": "MIT",
   "dependencies": {
+    "@google-cloud/vertexai": "^1.10.0",
     "@radix-ui/react-label": "^2.1.0",
     "@radix-ui/react-slot": "^1.1.1",
     "@radix-ui/react-toast": "^1.2.2",
