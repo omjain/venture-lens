@@ -1,10 +1,9 @@
-const axios = require('axios');
-const { GoogleAuth } = require('google-auth-library');
+const axios = require("axios");
+const cheerio = require("cheerio");
 
-// API configuration - supports both Vertex AI and Gemini API
+// === Config ===
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_PROJECT_ID = process.env.GEMINI_PROJECT_ID;
-const GEMINI_LOCATION = process.env.GEMINI_LOCATION || 'us-central1';
+const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
 
 // Determine which API to use
 const USE_VERTEX_AI = !!(GEMINI_PROJECT_ID && GEMINI_LOCATION);
@@ -117,54 +116,17 @@ async function scrapePublicUrls(urls) {
   
   for (const url of urls) {
     try {
-      console.log(`🔍 Scraping URL: ${url}`);
-      const response = await axios.get(url, {
-        timeout: 10000,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-      
-      const $ = cheerio.load(response.data);
-      
-      // Remove script and style elements
-      $('script, style').remove();
-      
-      // Extract text content
-      const text = $('body').text()
-        .replace(/\s+/g, ' ')
-        .trim();
-      
-      scrapedText += `\n\n--- Content from ${url} ---\n${text.substring(0, 2000)}...`;
-      
-    } catch (error) {
-      console.warn(`⚠️ Failed to scrape ${url}:`, error.message);
-      scrapedText += `\n\n--- Content from ${url} (scraping failed) ---\n[Unable to access content]`;
+      const res = await axios.get(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+      const $ = cheerio.load(res.data);
+      $("script, style, noscript").remove();
+      const content = $("body").text().replace(/\s+/g, " ").slice(0, 2000);
+      text += `\n\n--- ${url} ---\n${content}...`;
+    } catch (err) {
+      console.error(`Scraping failed for ${url}:`, err.message);
+      text += `\n\n--- ${url} --- [Scraping failed]`;
     }
   }
-  
-  return scrapedText;
-}
-
-/**
- * Gets access token for Vertex AI authentication
- */
-async function getAccessToken() {
-  if (!authClient) {
-    throw new Error('Google Auth client not initialized. Please configure Vertex AI credentials and run: gcloud auth application-default login');
-  }
-  
-  try {
-    const client = await authClient.getClient();
-    const accessToken = await client.getAccessToken();
-    if (!accessToken) {
-      throw new Error('Failed to obtain access token');
-    }
-    return accessToken.token || accessToken;
-  } catch (error) {
-    console.error('Failed to get access token:', error.message);
-    throw new Error('Failed to authenticate with Vertex AI. Make sure you have run: gcloud auth application-default login');
-  }
+  return text;
 }
 
 /**
@@ -583,311 +545,50 @@ function generateRiskMRIAnalysis(industry, actualRevenue, userCount, teamSize, h
   const overallRiskScore = riskCategories.reduce((sum, cat) => sum + cat.score, 0) / riskCategories.length;
   
   return {
-    categories: riskCategories,
-    overallScore: Math.round(overallRiskScore * 10) / 10
-  };
-}
-
-/**
- * Generate Peer Benchmark Analysis based on startup data
- */
-function generatePeerBenchmarkAnalysis(industry, actualRevenue, userCount, teamSize, revenue, users) {
-  // Generate realistic peer benchmarks based on industry and company metrics
-  const industryBenchmarks = getIndustryBenchmarks(industry);
-  
-  const metrics = [
-    {
-      name: "Revenue Growth",
-      company: calculateRevenueGrowth(actualRevenue, industry),
-      peers: generatePeerValues(industryBenchmarks.revenueGrowth, 3),
-      unit: "%",
-      higher: true
+    summary: "No summary available.",
+    strengths: [],
+    risks: [],
+    nextSteps: [],
+    dealScore: 0,
+    riskMRI: {
+      categories: [
+        { name: "Team", score: 0, description: "Not analyzed" },
+        { name: "Market", score: 0, description: "Not analyzed" },
+        { name: "Product", score: 0, description: "Not analyzed" },
+        { name: "Traction", score: 0, description: "Not analyzed" },
+        { name: "Moat", score: 0, description: "Not analyzed" }
+      ],
+      overallScore: 0
     },
-    {
-      name: "Gross Margin",
-      company: calculateGrossMargin(industry, actualRevenue),
-      peers: generatePeerValues(industryBenchmarks.grossMargin, 3),
-      unit: "%",
-      higher: true
-    },
-    {
-      name: "CAC Payback",
-      company: calculateCACPayback(industry, actualRevenue, userCount),
-      peers: generatePeerValues(industryBenchmarks.cacPayback, 3),
-      unit: "months",
-      higher: false
-    },
-    {
-      name: "Net Retention",
-      company: calculateNetRetention(industry, userCount),
-      peers: generatePeerValues(industryBenchmarks.netRetention, 3),
-      unit: "%",
-      higher: true
+    peerBenchmark: {
+      metrics: [],
+      peerCompanies: [],
+      outperformingCount: 0,
+      percentileRank: 0
     }
-  ];
-  
-  const peerCompanies = generatePeerCompanyNames(industry);
-  const outperformingCount = metrics.filter(m => {
-    const peerAverage = m.peers.reduce((a, b) => a + b, 0) / m.peers.length;
-    return m.higher ? m.company > peerAverage : m.company < peerAverage;
-  }).length;
-  
-  const percentileRank = calculatePercentileRank(metrics, industryBenchmarks);
-  
-  return {
-    metrics,
-    peerCompanies,
-    outperformingCount,
-    percentileRank
   };
 }
 
-// Risk calculation helper functions
-function calculateTeamRisk(teamSize, hasTranscript) {
-  if (teamSize === 0) return 8; // High risk - no team info
-  if (teamSize < 5) return 7; // High risk - very small team
-  if (teamSize < 10) return 5; // Medium risk - small team
-  if (teamSize < 20) return 3; // Low risk - decent team size
-  if (hasTranscript) return 2; // Very low risk - large team + interview
-  return 4; // Low risk - large team
-}
+// === Core Function ===
+async function analyzeStartup(data) {
+  const { startupName = "Unknown Startup", deckText = "", transcriptText = "", publicUrls = [] } = data;
 
-function calculateMarketRisk(industry, userCount, hasPublicData) {
-  let risk = 5; // Base medium risk
-  
-  // Industry-specific risk adjustments
-  if (industry === "fintech") risk += 1; // Higher regulatory risk
-  if (industry === "healthcare") risk += 1; // Higher regulatory risk
-  if (industry === "SaaS") risk -= 1; // Lower market risk
-  if (industry === "e-commerce") risk -= 0.5; // Moderate market risk
-  
-  // User traction adjustments
-  if (userCount === 0) risk += 2; // High risk - no users
-  if (userCount < 1000) risk += 1; // Medium risk - few users
-  if (userCount > 100000) risk -= 1; // Lower risk - many users
-  
-  // Public data validation
-  if (!hasPublicData) risk += 0.5; // Slightly higher risk without validation
-  
-  return Math.max(1, Math.min(10, Math.round(risk)));
-}
+  // Scrape URLs only if provided
+  const scrapedText = await scrapeUrls(publicUrls);
 
-function calculateProductRisk(actualRevenue, userCount, hasDeckText) {
-  let risk = 5; // Base medium risk
-  
-  // Revenue validation
-  if (actualRevenue === 0) risk += 2; // High risk - no revenue
-  if (actualRevenue > 1000000) risk -= 1; // Lower risk - good revenue
-  
-  // User validation
-  if (userCount === 0) risk += 2; // High risk - no users
-  if (userCount > 10000) risk -= 1; // Lower risk - many users
-  
-  // Product documentation
-  if (!hasDeckText) risk += 1; // Higher risk - no product info
-  
-  return Math.max(1, Math.min(10, Math.round(risk)));
-}
+  // If nothing found, still use what user gave
+  const contextText = `
+Startup Name: ${startupName}
 
-function calculateTractionRisk(actualRevenue, userCount, growthRate) {
-  let risk = 5; // Base medium risk
-  
-  // Revenue traction
-  if (actualRevenue === 0) risk += 3; // Very high risk - no revenue
-  if (actualRevenue > 1000000) risk -= 2; // Much lower risk - good revenue
-  
-  // User traction
-  if (userCount === 0) risk += 2; // High risk - no users
-  if (userCount > 100000) risk -= 1; // Lower risk - many users
-  
-  // Growth rate
-  if (growthRate) {
-    const growthValue = parseFloat(growthRate.replace('%', ''));
-    if (growthValue > 50) risk -= 1; // Lower risk - high growth
-    if (growthValue < 10) risk += 1; // Higher risk - low growth
-  }
-  
-  return Math.max(1, Math.min(10, Math.round(risk)));
-}
+Pitch Deck:
+${deckText || "[No pitch deck provided]"}
 
-function calculateMoatRisk(industry, actualRevenue, userCount, hasDeckText) {
-  let risk = 6; // Base medium-high risk (moats are hard to build)
-  
-  // Industry moat potential
-  if (industry === "SaaS") risk -= 1; // SaaS can build moats
-  if (industry === "fintech") risk -= 0.5; // Fintech has regulatory moats
-  if (industry === "e-commerce") risk += 0.5; // E-commerce is competitive
-  
-  // Scale advantages
-  if (actualRevenue > 10000000) risk -= 1; // Scale creates moats
-  if (userCount > 1000000) risk -= 1; // Network effects
-  
-  // Product differentiation
-  if (hasDeckText) risk -= 0.5; // Product info suggests differentiation
-  
-  return Math.max(1, Math.min(10, Math.round(risk)));
-}
+Founder Transcript:
+${transcriptText || "[No founder transcript provided]"}
 
-// Risk description generators
-function generateTeamRiskDescription(teamSize, hasTranscript) {
-  if (teamSize === 0) return "No team information available";
-  if (teamSize < 5) return "Very small team - execution risk";
-  if (teamSize < 10) return "Small but focused team";
-  if (teamSize < 20) return "Solid team size for execution";
-  if (hasTranscript) return "Large experienced team with proven leadership";
-  return "Large team with good execution capacity";
-}
-
-function generateMarketRiskDescription(industry, userCount, hasPublicData) {
-  let desc = `${industry} market `;
-  if (userCount === 0) desc += "with no user validation";
-  else if (userCount < 1000) desc += "with limited user traction";
-  else if (userCount > 100000) desc += "with strong user adoption";
-  else desc += "with moderate user base";
-  
-  if (hasPublicData) desc += " and market validation";
-  return desc;
-}
-
-function generateProductRiskDescription(actualRevenue, userCount, hasDeckText) {
-  if (actualRevenue === 0 && userCount === 0) return "Unproven product-market fit";
-  if (actualRevenue > 0 && userCount > 0) return "Validated product with revenue and users";
-  if (actualRevenue > 0) return "Revenue-generating product";
-  if (userCount > 0) return "User-validated product";
-  return "Product validation needed";
-}
-
-function generateTractionRiskDescription(actualRevenue, userCount, growthRate) {
-  if (actualRevenue === 0 && userCount === 0) return "No traction indicators";
-  if (actualRevenue > 1000000 || userCount > 100000) return "Strong traction metrics";
-  if (growthRate) return `Growing at ${growthRate} with early traction`;
-  return "Early traction with validation needed";
-}
-
-function generateMoatRiskDescription(industry, actualRevenue, userCount, hasDeckText) {
-  if (actualRevenue > 10000000 || userCount > 1000000) return "Scale advantages and network effects";
-  if (industry === "SaaS" && hasDeckText) return "SaaS model with potential for recurring revenue moats";
-  if (industry === "fintech") return "Regulatory barriers provide some protection";
-  return "Competitive differentiation needed";
-}
-
-// Peer benchmark helper functions
-function getIndustryBenchmarks(industry) {
-  const benchmarks = {
-    technology: { revenueGrowth: 45, grossMargin: 75, cacPayback: 12, netRetention: 110 },
-    fintech: { revenueGrowth: 60, grossMargin: 80, cacPayback: 8, netRetention: 115 },
-    healthcare: { revenueGrowth: 35, grossMargin: 70, cacPayback: 18, netRetention: 105 },
-    "e-commerce": { revenueGrowth: 40, grossMargin: 60, cacPayback: 15, netRetention: 108 },
-    SaaS: { revenueGrowth: 50, grossMargin: 85, cacPayback: 10, netRetention: 120 },
-    "food delivery": { revenueGrowth: 30, grossMargin: 45, cacPayback: 20, netRetention: 95 }
-  };
-  
-  return benchmarks[industry] || benchmarks.technology;
-}
-
-function calculateRevenueGrowth(actualRevenue, industry) {
-  if (actualRevenue === 0) return 0;
-  if (actualRevenue < 100000) return 25; // Early stage
-  if (actualRevenue < 1000000) return 40; // Growth stage
-  if (actualRevenue < 10000000) return 60; // Scale stage
-  return 35; // Mature stage
-}
-
-function calculateGrossMargin(industry, actualRevenue) {
-  const baseMargins = {
-    technology: 75,
-    fintech: 80,
-    healthcare: 70,
-    "e-commerce": 60,
-    SaaS: 85,
-    "food delivery": 45
-  };
-  
-  let margin = baseMargins[industry] || 75;
-  
-  // Adjust based on revenue scale
-  if (actualRevenue > 10000000) margin += 5; // Scale advantages
-  if (actualRevenue < 100000) margin -= 10; // Early stage inefficiencies
-  
-  return Math.max(30, Math.min(95, margin));
-}
-
-function calculateCACPayback(industry, actualRevenue, userCount) {
-  const basePayback = {
-    technology: 12,
-    fintech: 8,
-    healthcare: 18,
-    "e-commerce": 15,
-    SaaS: 10,
-    "food delivery": 20
-  };
-  
-  let payback = basePayback[industry] || 12;
-  
-  // Adjust based on scale
-  if (actualRevenue > 1000000) payback -= 3; // Better unit economics
-  if (userCount > 100000) payback -= 2; // Network effects
-  
-  return Math.max(3, Math.min(24, payback));
-}
-
-function calculateNetRetention(industry, userCount) {
-  const baseRetention = {
-    technology: 110,
-    fintech: 115,
-    healthcare: 105,
-    "e-commerce": 108,
-    SaaS: 120,
-    "food delivery": 95
-  };
-  
-  let retention = baseRetention[industry] || 110;
-  
-  // Adjust based on user base
-  if (userCount > 100000) retention += 5; // Better retention at scale
-  if (userCount < 1000) retention -= 10; // Early stage churn
-  
-  return Math.max(80, Math.min(150, retention));
-}
-
-function generatePeerValues(benchmark, count) {
-  const values = [];
-  for (let i = 0; i < count; i++) {
-    // Generate realistic peer values around the benchmark
-    const variation = (Math.random() - 0.5) * 0.4; // ±20% variation
-    const value = Math.round(benchmark * (1 + variation));
-    values.push(Math.max(0, value));
-  }
-  return values;
-}
-
-function generatePeerCompanyNames(industry) {
-  const peerNames = {
-    technology: ["TechCorp", "InnovateLab", "FutureSoft"],
-    fintech: ["PayFlow", "BankTech", "FinanceAI"],
-    healthcare: ["MedTech", "HealthAI", "CareSoft"],
-    "e-commerce": ["ShopTech", "MarketPlace", "RetailAI"],
-    SaaS: ["CloudSoft", "DataFlow", "AppTech"],
-    "food delivery": ["FoodTech", "DeliveryAI", "MealFlow"]
-  };
-  
-  return peerNames[industry] || ["Competitor A", "Competitor B", "Competitor C"];
-}
-
-function calculatePercentileRank(metrics, benchmarks) {
-  let totalScore = 0;
-  let maxScore = 0;
-  
-  metrics.forEach(metric => {
-    const peerAverage = metric.peers.reduce((a, b) => a + b, 0) / metric.peers.length;
-    const isPerforming = metric.higher ? metric.company > peerAverage : metric.company < peerAverage;
-    totalScore += isPerforming ? 1 : 0;
-    maxScore += 1;
-  });
-  
-  const percentile = Math.round((totalScore / maxScore) * 100);
-  return Math.max(10, Math.min(95, percentile));
-}
+Public Data:
+${scrapedText || "[No public data or URLs available]"}
+`;
 
 /**
  * Analyzes startup data and returns structured insights
@@ -909,17 +610,41 @@ async function analyzeStartup(data) {
   const analysisPrompt = `
 Startup Name: ${startupName}
 
-Pitch Deck Content:
-${deckText || '[No pitch deck provided]'}
+Return ONLY valid JSON (no markdown or comments) following EXACTLY this schema:
 
-Founder Interview/Transcript:
-${transcriptText || '[No transcript provided]'}
+{
+  "summary": "short text summary",
+  "strengths": ["..."],
+  "risks": ["..."],
+  "nextSteps": ["..."],
+  "dealScore": number (0-10),
+  "riskMRI": {
+    "categories": [
+      {"name": "Team", "score": number, "description": "..."},
+      {"name": "Market", "score": number, "description": "..."},
+      {"name": "Product", "score": number, "description": "..."},
+      {"name": "Traction", "score": number, "description": "..."},
+      {"name": "Moat", "score": number, "description": "..."}
+    ],
+    "overallScore": number
+  },
+  "peerBenchmark": {
+    "metrics": [
+      {"name": "Revenue Growth", "company": number, "peers": [numbers], "unit": "%", "higher": true},
+      {"name": "Gross Margin", "company": number, "peers": [numbers], "unit": "%", "higher": true},
+      {"name": "CAC Payback", "company": number, "peers": [numbers], "unit": "months", "higher": false},
+      {"name": "Net Retention", "company": number, "peers": [numbers], "unit": "%", "higher": true}
+    ],
+    "peerCompanies": ["..."],
+    "outperformingCount": number,
+    "percentileRank": number
+  }
+}
 
-Public Data/News:
-${scrapedText || '[No public data provided]'}
+Startup Content:
+${contextText}
+`;
 
-Please analyze this startup and provide your investment insights.`;
-  
   try {
     // First, try to call the real Gemini API
     let aiAnalysis = null;
@@ -1242,47 +967,19 @@ function generateIntelligentChatResponse(userQuestion, conversationHistory, cont
   return "That's an interesting question about startup analysis. Based on the data we have, I'd recommend focusing on the key metrics and risk factors identified in the analysis. Could you be more specific about what aspect of the investment opportunity you'd like to discuss? I can help with market analysis, financial metrics, team assessment, or due diligence guidance.";
 }
 
-/**
- * Handles chat interactions with AI analyst
- */
-async function chatWithAI(data) {
-  const { conversationHistory, userQuestion, contextData } = data;
-  
-  // Build conversation context
-  let conversationContext = '';
-  if (conversationHistory && conversationHistory.length > 0) {
-    conversationContext = conversationHistory.map(msg => 
-      `${msg.role}: ${msg.content}`
-    ).join('\n') + '\n';
-  }
-  
-  // Add context data if available
-  let contextInfo = '';
-  if (contextData && Object.keys(contextData).length > 0) {
-    contextInfo = `\nContext Data:\n${JSON.stringify(contextData, null, 2)}\n`;
-  }
-  
-  const chatPrompt = `${conversationContext}${contextInfo}User: ${userQuestion}`;
-  
-  try {
-    // For now, provide intelligent mock responses based on the question
-    // TODO: Replace with actual Gemini API call once API key is configured
-    const answer = generateIntelligentChatResponse(userQuestion, conversationHistory, contextData);
-    
-    return {
-      answer: answer
+    // Merge with defaults to ensure all keys are present
+    const finalOutput = {
+      ...getDefaultResponse(),
+      ...parsed,
+      riskMRI: { ...getDefaultResponse().riskMRI, ...parsed.riskMRI },
+      peerBenchmark: { ...getDefaultResponse().peerBenchmark, ...parsed.peerBenchmark }
     };
-    
-  } catch (error) {
-    console.error('Chat error:', error);
-    
-    return {
-      answer: `I apologize, but I'm unable to process your request at the moment. ${error.message}`
-    };
+
+    return finalOutput;
+  } catch (err) {
+    console.error("Gemini API Error:", err.response?.data || err.message);
+    return { error: "Analysis failed", details: err.response?.data || err.message };
   }
 }
 
-module.exports = {
-  analyzeStartup,
-  chatWithAI
-};
+module.exports = { analyzeStartup };
