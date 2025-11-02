@@ -44,15 +44,38 @@ router.post('/', validateAnalyzeRequest, async (req, res) => {
  * Health check for analysis service
  */
 router.get('/health', (req, res) => {
-  const isConfigured = !!(process.env.GEMINI_API_KEY || 
-                          (process.env.GEMINI_PROJECT_ID && process.env.GEMINI_LOCATION));
+  const hasProjectId = !!process.env.GEMINI_PROJECT_ID;
+  const hasLocation = !!process.env.GEMINI_LOCATION;
+  const hasApiKey = !!process.env.GEMINI_API_KEY;
+  const hasServiceAccountJson = !!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  const hasServiceAccountPath = !!process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  
+  // Vertex AI is configured if we have project + location + (service account OR api key)
+  const isVertexAIConfigured = hasProjectId && hasLocation && (hasServiceAccountJson || hasServiceAccountPath);
+  const isGeminiAPIConfigured = hasApiKey && !hasProjectId;
+  const isConfigured = isVertexAIConfigured || isGeminiAPIConfigured;
+  
   res.json({
     status: 'OK',
     service: 'analyze',
     timestamp: new Date().toISOString(),
     geminiConfigured: isConfigured,
-    usingVertexAI: !!(process.env.GEMINI_PROJECT_ID && process.env.GEMINI_LOCATION),
-    usingGeminiAPI: !!process.env.GEMINI_API_KEY && !process.env.GEMINI_PROJECT_ID
+    usingVertexAI: isVertexAIConfigured,
+    usingGeminiAPI: isGeminiAPIConfigured,
+    configuration: {
+      hasProjectId,
+      hasLocation,
+      hasApiKey,
+      hasServiceAccountJson,
+      hasServiceAccountPath,
+      projectId: hasProjectId ? process.env.GEMINI_PROJECT_ID.substring(0, 10) + '...' : 'NOT SET',
+      location: hasLocation ? process.env.GEMINI_LOCATION : 'NOT SET',
+      apiKeyStatus: hasApiKey ? 'SET (hidden)' : 'NOT SET',
+      serviceAccountStatus: hasServiceAccountJson ? 'SET (JSON env var)' : 
+                           hasServiceAccountPath ? `SET (file: ${process.env.GOOGLE_APPLICATION_CREDENTIALS})` : 'NOT SET'
+    },
+    warning: !isConfigured ? '⚠️ No API credentials configured. Analysis will use mock data.' : null,
+    recommendation: !isConfigured ? 'Configure GEMINI_PROJECT_ID + GEMINI_LOCATION + GOOGLE_APPLICATION_CREDENTIALS_JSON (or GOOGLE_APPLICATION_CREDENTIALS) for Vertex AI, or GEMINI_API_KEY for Gemini API.' : null
   });
 });
 

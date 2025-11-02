@@ -19,14 +19,45 @@ const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models
 let authClient = null;
 if (USE_VERTEX_AI) {
   try {
-    authClient = new GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-    console.log('✅ Vertex AI authentication initialized');
+    // Support both service account JSON file and application default credentials
+    const serviceAccountPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    const serviceAccountJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    
+    if (serviceAccountJson) {
+      // Use service account JSON from environment variable
+      try {
+        const serviceAccount = JSON.parse(serviceAccountJson);
+        authClient = new GoogleAuth({
+          credentials: serviceAccount,
+          scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+        });
+        console.log('✅ Vertex AI authentication initialized from GOOGLE_APPLICATION_CREDENTIALS_JSON');
+      } catch (parseError) {
+        console.warn('⚠️ Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON:', parseError.message);
+      }
+    } else if (serviceAccountPath) {
+      // Use service account JSON file path
+      authClient = new GoogleAuth({
+        keyFilename: serviceAccountPath,
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      });
+      console.log(`✅ Vertex AI authentication initialized from file: ${serviceAccountPath}`);
+    } else {
+      // Try application default credentials (requires gcloud auth or env var)
+      authClient = new GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+      });
+      console.log('✅ Vertex AI authentication initialized (using application default credentials)');
+      console.log('   Note: Make sure you have run: gcloud auth application-default login');
+    }
   } catch (error) {
-    console.warn('⚠️ Google Auth initialization failed. Make sure you have gcloud CLI installed or service account credentials configured.');
-    console.warn('   Run: gcloud auth application-default login');
+    console.warn('⚠️ Google Auth initialization failed:', error.message);
+    console.warn('   Options to fix:');
+    console.warn('   1. Set GOOGLE_APPLICATION_CREDENTIALS_JSON with service account JSON');
+    console.warn('   2. Set GOOGLE_APPLICATION_CREDENTIALS to path of service account JSON file');
+    console.warn('   3. Run: gcloud auth application-default login');
     console.warn('   The service will use mock responses until authentication is configured.');
+    authClient = null; // Ensure it's null so we know auth failed
   }
 } else if (!GEMINI_API_KEY) {
   console.log('ℹ️  No API credentials configured. Using intelligent mock responses.');
@@ -156,7 +187,7 @@ async function callGeminiAPI(prompt, systemPrompt) {
   
   let url;
   let headers = {
-    'Content-Type': 'application/json'
+        'Content-Type': 'application/json'
   };
   
   // Use Vertex AI if project ID and location are configured
@@ -166,10 +197,14 @@ async function callGeminiAPI(prompt, systemPrompt) {
     }
     
     url = VERTEX_AI_BASE_URL;
-    const accessToken = await getAccessToken();
-    headers['Authorization'] = `Bearer ${accessToken}`;
-    
-    console.log('🔐 Using Vertex AI endpoint');
+    try {
+      const accessToken = await getAccessToken();
+      headers['Authorization'] = `Bearer ${accessToken}`;
+      console.log('🔐 Using Vertex AI endpoint - Authentication successful');
+    } catch (authError) {
+      console.error('❌ Vertex AI authentication failed:', authError.message);
+      throw new Error(`Vertex AI authentication failed: ${authError.message}. Please run: gcloud auth application-default login`);
+    }
   } else if (GEMINI_API_KEY) {
     // Fall back to Gemini API (Google AI Studio)
     url = `${GEMINI_BASE_URL}?key=${GEMINI_API_KEY}`;
@@ -212,6 +247,71 @@ async function callGeminiAPI(prompt, systemPrompt) {
     }
     
     throw new Error(`API call failed: ${error.message}`);
+  }
+}
+
+/**
+ * Extract structured analysis from AI text response (fallback parser)
+ */
+function extractAnalysisFromText(text, startupName) {
+  try {
+    const analysis = {
+      summary: '',
+      strengths: [],
+      risks: [],
+      nextSteps: [],
+      dealScore: 5
+    };
+    
+    // Try to extract summary
+    const summaryMatch = text.match(/(?:summary|overview)[:\-]?\s*(.+?)(?=\n\n|\n(?:strengths|risks|next steps|deal score)|$)/is);
+    if (summaryMatch) {
+      analysis.summary = summaryMatch[1].trim();
+    } else {
+      // Fallback: use first paragraph
+      analysis.summary = text.split('\n\n')[0] || `Analysis of ${startupName}`;
+    }
+    
+    // Try to extract strengths (look for list items or numbered points)
+    const strengthsSection = text.match(/(?:strengths?)[:\-]?\s*(.+?)(?=\n\n|\n(?:risks|next steps|deal score|concerns)|$)/is);
+    if (strengthsSection) {
+      const strengthsText = strengthsSection[1];
+      const strengthItems = strengthsText.match(/(?:[-•*]\s*|\d+\.\s*)(.+?)(?=\n[-•*\d]|$)/g);
+      if (strengthItems) {
+        analysis.strengths = strengthItems.map(item => item.replace(/^[-•*\d.\s]+/, '').trim()).filter(s => s.length > 10);
+      }
+    }
+    
+    // Try to extract risks
+    const risksSection = text.match(/(?:risks?|concerns?)[:\-]?\s*(.+?)(?=\n\n|\n(?:next steps|deal score|strengths)|$)/is);
+    if (risksSection) {
+      const risksText = risksSection[1];
+      const riskItems = risksText.match(/(?:[-•*]\s*|\d+\.\s*)(.+?)(?=\n[-•*\d]|$)/g);
+      if (riskItems) {
+        analysis.risks = riskItems.map(item => item.replace(/^[-•*\d.\s]+/, '').trim()).filter(s => s.length > 10);
+      }
+    }
+    
+    // Try to extract next steps
+    const nextStepsSection = text.match(/(?:next steps?|recommendations?)[:\-]?\s*(.+?)(?=\n\n|\n(?:deal score|strengths|risks)|$)/is);
+    if (nextStepsSection) {
+      const nextStepsText = nextStepsSection[1];
+      const nextStepItems = nextStepsText.match(/(?:[-•*]\s*|\d+\.\s*)(.+?)(?=\n[-•*\d]|$)/g);
+      if (nextStepItems) {
+        analysis.nextSteps = nextStepItems.map(item => item.replace(/^[-•*\d.\s]+/, '').trim()).filter(s => s.length > 10);
+      }
+    }
+    
+    // Try to extract deal score
+    const scoreMatch = text.match(/(?:deal\s*score|score|rating)[:\-]?\s*(\d+(?:\.\d+)?)\s*(?:\/\s*10|out\s*of\s*10)?/i);
+    if (scoreMatch) {
+      analysis.dealScore = parseFloat(scoreMatch[1]);
+    }
+    
+    return analysis;
+  } catch (error) {
+    console.error('Error extracting analysis from text:', error);
+    return null;
   }
 }
 
@@ -793,10 +893,17 @@ function calculatePercentileRank(metrics, benchmarks) {
  * Analyzes startup data and returns structured insights
  */
 async function analyzeStartup(data) {
+  // Validate input
+  if (!data || !data.startupName || typeof data.startupName !== 'string' || data.startupName.trim().length === 0) {
+    throw new Error('startupName is required and must be a non-empty string');
+  }
+  
   const { startupName, deckText, transcriptText, publicUrls } = data;
   
+  console.log(`🔍 Starting analysis for: ${startupName}`);
+  
   // Scrape public URLs if provided
-  const scrapedText = await scrapePublicUrls(publicUrls);
+  const scrapedText = await scrapePublicUrls(publicUrls || []);
   
   // Prepare the analysis prompt
   const analysisPrompt = `
@@ -814,7 +921,117 @@ ${scrapedText || '[No public data provided]'}
 Please analyze this startup and provide your investment insights.`;
   
   try {
-    // Create a sophisticated AI-like analysis based on the actual startup data
+    // First, try to call the real Gemini API
+    let aiAnalysis = null;
+    try {
+      console.log(`🤖 Calling Gemini API for analysis of: ${startupName}`);
+      console.log(`   Using Vertex AI: ${USE_VERTEX_AI ? 'YES' : 'NO'}`);
+      console.log(`   Project ID: ${GEMINI_PROJECT_ID || 'NOT SET'}`);
+      console.log(`   Location: ${GEMINI_LOCATION || 'NOT SET'}`);
+      console.log(`   API Key: ${GEMINI_API_KEY ? 'SET (hidden)' : 'NOT SET'}`);
+      
+      const aiResponse = await callGeminiAPI(analysisPrompt, ANALYSIS_SYSTEM_PROMPT);
+      
+      // Parse JSON response from AI
+      let jsonText = aiResponse;
+      // Try to extract JSON if wrapped in markdown
+      if (jsonText.includes('```json')) {
+        jsonText = jsonText.substring(jsonText.indexOf('```json') + 7);
+        jsonText = jsonText.substring(0, jsonText.indexOf('```')).trim();
+      } else if (jsonText.includes('```')) {
+        jsonText = jsonText.substring(jsonText.indexOf('```') + 3);
+        jsonText = jsonText.substring(0, jsonText.indexOf('```')).trim();
+      }
+      
+      // Try to parse as JSON
+      try {
+        aiAnalysis = JSON.parse(jsonText);
+        console.log('✅ Successfully received AI analysis from Gemini API');
+      } catch (parseError) {
+        console.warn('⚠️  Failed to parse AI response as JSON, falling back to structured analysis');
+        // If JSON parsing fails, extract structured data from text
+        aiAnalysis = extractAnalysisFromText(aiResponse, startupName);
+      }
+    } catch (apiError) {
+      console.warn('⚠️  Gemini API call failed, falling back to intelligent analysis:', apiError.message);
+      // Fall through to generate intelligent mock analysis
+    }
+    
+    // If we got AI analysis, use it (with fallback enrichment)
+    if (aiAnalysis && (aiAnalysis.summary || aiAnalysis.strengths || aiAnalysis.risks)) {
+      // Enrich with additional metrics analysis
+      const hasDeckText = deckText && deckText.trim().length > 0;
+      const hasTranscript = transcriptText && transcriptText.trim().length > 0;
+      const hasPublicData = scrapedText && scrapedText.trim().length > 0;
+      
+      // Extract metrics for additional analysis components
+      const allContent = (deckText + transcriptText + scrapedText).toLowerCase();
+      const originalContent = deckText + transcriptText + scrapedText;
+      
+      // Extract revenue
+      const revenueMatch = originalContent.match(/\$[\d,]+(?:\.\d+)?[KMB]?/g) || allContent.match(/\$[\d,]+(?:\.\d+)?[kmb]?/g);
+      const revenue = revenueMatch ? revenueMatch[0] : null;
+      const revenueValue = revenue ? parseFloat(revenue.replace(/[$,]/g, '')) : 0;
+      const revenueUnit = revenue ? (revenue.match(/[KMB]/)?.[0] || revenue.match(/[kmb]/)?.[0]) : null;
+      const actualRevenue = revenueUnit === 'K' || revenueUnit === 'k' ? revenueValue * 1000 : 
+                           revenueUnit === 'M' || revenueUnit === 'm' ? revenueValue * 1000000 : 
+                           revenueUnit === 'B' || revenueUnit === 'b' ? revenueValue * 1000000000 : revenueValue;
+      
+      // Extract user count
+      const userMatch = originalContent.match(/(\d+(?:,\d+)*)\s*(?:users|customers|subscribers|active users|vehicles|deliveries)/gi) || 
+                       allContent.match(/(\d+(?:,\d+)*)\s*(?:users|customers|subscribers|active users|vehicles|deliveries)/gi);
+      const users = userMatch ? userMatch[0] : null;
+      const userCount = users ? parseInt(users.replace(/[^\d]/g, '')) : 0;
+      
+      // Extract team size
+      const teamMatch = originalContent.match(/(\d+(?:,\d+)*)\s*(?:people|employees|team members|founders|staff)/gi) || 
+                       allContent.match(/(\d+(?:,\d+)*)\s*(?:people|employees|team members|founders|staff)/gi);
+      const teamSize = teamMatch ? parseInt(teamMatch[0].replace(/[^\d]/g, '')) : 0;
+      
+      // Extract growth rate
+      const growthMatch = allContent.match(/(\d+(?:\.\d+)?%)\s*(?:growth|increase|yoy|mom)/gi);
+      const growthRate = growthMatch ? growthMatch[0] : null;
+      
+      // Extract funding
+      const fundingMatch = allContent.match(/(?:raised|funding|investment|series|round).*?\$[\d,]+(?:K|M|B)?/gi);
+      const funding = fundingMatch ? fundingMatch[0] : null;
+      
+      // Determine industry
+      let industry = "technology";
+      if (allContent.includes("healthcare") || allContent.includes("medical") || allContent.includes("health")) {
+        industry = "healthcare";
+      } else if (allContent.includes("fintech") || allContent.includes("financial") || allContent.includes("payment") || allContent.includes("banking")) {
+        industry = "fintech";
+      } else if (allContent.includes("ecommerce") || allContent.includes("retail") || allContent.includes("marketplace")) {
+        industry = "e-commerce";
+      } else if (allContent.includes("education") || allContent.includes("edtech") || allContent.includes("learning")) {
+        industry = "education";
+      } else if (allContent.includes("saas") || allContent.includes("software") || allContent.includes("platform")) {
+        industry = "SaaS";
+      } else if (allContent.includes("food") || allContent.includes("delivery") || allContent.includes("restaurant")) {
+        industry = "food delivery";
+      }
+      
+      // Add Risk MRI and Peer Benchmark (computed from metrics)
+      const riskMRI = generateRiskMRIAnalysis(industry, actualRevenue, userCount, teamSize, hasDeckText, hasTranscript, hasPublicData, growthRate, funding);
+      const peerBenchmark = generatePeerBenchmarkAnalysis(industry, actualRevenue, userCount, teamSize, actualRevenue, userCount);
+      
+      // Ensure all required fields are present with defaults
+      const result = {
+        summary: aiAnalysis.summary || `Analysis of ${startupName} based on provided materials.`,
+        strengths: Array.isArray(aiAnalysis.strengths) ? aiAnalysis.strengths : (aiAnalysis.strengths ? [aiAnalysis.strengths] : []),
+        risks: Array.isArray(aiAnalysis.risks) ? aiAnalysis.risks : (aiAnalysis.risks ? [aiAnalysis.risks] : []),
+        nextSteps: Array.isArray(aiAnalysis.nextSteps) ? aiAnalysis.nextSteps : (aiAnalysis.nextSteps ? [aiAnalysis.nextSteps] : []),
+        dealScore: typeof aiAnalysis.dealScore === 'number' ? Math.max(0, Math.min(10, aiAnalysis.dealScore)) : 5,
+        riskMRI,
+        peerBenchmark
+      };
+      
+      console.log(`✅ Analysis completed successfully for: ${startupName}`);
+      return result;
+    }
+    
+    // Fallback: Create a sophisticated AI-like analysis based on the actual startup data
     const hasDeckText = deckText && deckText.trim().length > 0;
     const hasTranscript = transcriptText && transcriptText.trim().length > 0;
     const hasPublicData = scrapedText && scrapedText.trim().length > 0;
@@ -906,18 +1123,70 @@ Please analyze this startup and provide your investment insights.`;
       peerBenchmark
     };
     
+    console.log(`✅ Fallback analysis completed for: ${startupName} (using intelligent mock analysis)`);
     return mockAnalysisResult;
     
   } catch (error) {
-    console.error('Analysis error:', error);
+    console.error('❌ Analysis error:', error);
     
-    // Return fallback response
+    // Extract basic info even on error for partial results
+    const hasDeckText = deckText && deckText.trim().length > 0;
+    const hasTranscript = transcriptText && transcriptText.trim().length > 0;
+    const hasPublicData = scrapedText && scrapedText.trim().length > 0;
+    const allContent = ((deckText || '') + (transcriptText || '') + (scrapedText || '')).toLowerCase();
+    
+    // Try to extract basic metrics even on error
+    const originalContent = (deckText || '') + (transcriptText || '') + (scrapedText || '');
+    const revenueMatch = originalContent.match(/\$[\d,]+(?:\.\d+)?[KMB]?/g);
+    const revenue = revenueMatch ? revenueMatch[0] : null;
+    const revenueValue = revenue ? parseFloat(revenue.replace(/[$,]/g, '')) : 0;
+    const revenueUnit = revenue ? (revenue.match(/[KMB]/)?.[0] || revenue.match(/[kmb]/)?.[0]) : null;
+    const actualRevenue = revenueUnit === 'K' || revenueUnit === 'k' ? revenueValue * 1000 : 
+                         revenueUnit === 'M' || revenueUnit === 'm' ? revenueValue * 1000000 : 
+                         revenueUnit === 'B' || revenueUnit === 'b' ? revenueValue * 1000000000 : revenueValue;
+    
+    const userMatch = originalContent.match(/(\d+(?:,\d+)*)\s*(?:users|customers|subscribers|active users)/gi);
+    const users = userMatch ? userMatch[0] : null;
+    const userCount = users ? parseInt(users.replace(/[^\d]/g, '')) : 0;
+    
+    const teamMatch = originalContent.match(/(\d+(?:,\d+)*)\s*(?:people|employees|team members|founders|staff)/gi);
+    const teamSize = teamMatch ? parseInt(teamMatch[0].replace(/[^\d]/g, '')) : 0;
+    
+    const growthMatch = allContent.match(/(\d+(?:\.\d+)?%)\s*(?:growth|increase|yoy|mom)/gi);
+    const growthRate = growthMatch ? growthMatch[0] : null;
+    const fundingMatch = allContent.match(/(?:raised|funding|investment|series|round).*?\$[\d,]+(?:K|M|B)?/gi);
+    const funding = fundingMatch ? fundingMatch[0] : null;
+    
+    let industry = "technology";
+    if (allContent.includes("healthcare") || allContent.includes("medical")) {
+      industry = "healthcare";
+    } else if (allContent.includes("fintech") || allContent.includes("financial")) {
+      industry = "fintech";
+    } else if (allContent.includes("saas") || allContent.includes("software")) {
+      industry = "SaaS";
+    }
+    
+    // Generate minimal risk MRI and peer benchmark even on error
+    const riskMRI = generateRiskMRIAnalysis(industry, actualRevenue, userCount, teamSize, hasDeckText, hasTranscript, hasPublicData, growthRate, funding);
+    const peerBenchmark = generatePeerBenchmarkAnalysis(industry, actualRevenue, userCount, teamSize, actualRevenue, userCount);
+    
+    // Return fallback response with required structure
     return {
-      summary: `Analysis failed for ${startupName}. ${error.message}`,
-      strengths: ["Unable to assess strengths"],
-      risks: ["Analysis unavailable"],
-      nextSteps: ["Retry analysis or contact support"],
-      dealScore: 0
+      summary: `Analysis encountered an error for ${startupName}. ${error.message}. Partial analysis available based on available data.`,
+      strengths: ["Unable to assess strengths due to processing error"],
+      risks: ["Analysis unavailable - error occurred during processing"],
+      nextSteps: ["Retry analysis", "Contact support if issue persists", "Verify input data format"],
+      dealScore: 0,
+      riskMRI: riskMRI || {
+        categories: [],
+        overallScore: 0
+      },
+      peerBenchmark: peerBenchmark || {
+        metrics: [],
+        peerCompanies: [],
+        outperformingCount: 0,
+        percentileRank: 0
+      }
     };
   }
 }

@@ -2,12 +2,15 @@ import { useState } from "react";
 import { Upload, FileText, MessageCircle, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import UploadZone from "@/components/dashboard/UploadZone";
 import StartupSummary from "@/components/dashboard/StartupSummary";
 import DealMemo from "@/components/dashboard/DealMemo";
 import RiskHeatmap from "@/components/dashboard/RiskHeatmap";
 import BenchmarkChart from "@/components/dashboard/BenchmarkChart";
 import AIChat from "@/components/dashboard/AIChat";
+import ScoringForm from "@/components/dashboard/ScoringForm";
+import CritiqueForm from "@/components/dashboard/CritiqueForm";
 
 const Index = () => {
   const [hasData, setHasData] = useState(false);
@@ -61,25 +64,47 @@ const Index = () => {
 
       {/* Main Content */}
       <main className="container mx-auto px-6 py-8 max-w-7xl">
-        {!hasData ? (
-          <div className="flex items-center justify-center min-h-[60vh]">
-            <UploadZone onUpload={() => setHasData(true)} />
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Left Column - Startup Overview */}
-            <div className="lg:col-span-1 space-y-6">
-              <StartupSummary />
-              <DealMemo />
-            </div>
+        <Tabs defaultValue="analysis" className="w-full">
+          <TabsList className="grid w-full max-w-xl grid-cols-3 mb-6">
+            <TabsTrigger value="analysis">Full Analysis</TabsTrigger>
+            <TabsTrigger value="scoring">Quick Scoring</TabsTrigger>
+            <TabsTrigger value="critique">VC Critique</TabsTrigger>
+          </TabsList>
 
-            {/* Right Column - Analytics */}
-            <div className="lg:col-span-2 space-y-6">
-              <RiskHeatmap />
-              <BenchmarkChart />
+          <TabsContent value="analysis">
+            {!hasData ? (
+              <div className="flex items-center justify-center min-h-[60vh]">
+                <UploadZone onUpload={() => setHasData(true)} />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Left Column - Startup Overview */}
+                <div className="lg:col-span-1 space-y-6">
+                  <StartupSummary />
+                  <DealMemo />
+                </div>
+
+                {/* Right Column - Analytics */}
+                <div className="lg:col-span-2 space-y-6">
+                  <RiskHeatmap />
+                  <BenchmarkChart />
+                </div>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="scoring">
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <ScoringForm />
             </div>
-          </div>
-        )}
+          </TabsContent>
+
+          <TabsContent value="critique">
+            <div className="flex items-center justify-center min-h-[60vh]">
+              <CritiqueForm />
+            </div>
+          </TabsContent>
+        </Tabs>
       </main>
 
       {/* AI Chat Panel */}

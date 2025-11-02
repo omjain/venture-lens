@@ -54,6 +54,48 @@ export interface ChatResponse {
   answer: string;
 }
 
+// FastAPI Scoring Service Types
+export interface ScoreRequest {
+  idea: string;
+  team: string;
+  traction: string;
+  market: string;
+  startup_name?: string;
+}
+
+export interface CategoryAssessment {
+  score: number;
+  assessment: string;
+  strengths: string[];
+  concerns: string[];
+}
+
+export interface ScoreBreakdown {
+  idea_score: number;
+  team_score: number;
+  traction_score: number;
+  market_score: number;
+  qualitative_assessment: {
+    idea: CategoryAssessment;
+    team: CategoryAssessment;
+    traction: CategoryAssessment;
+    market: CategoryAssessment;
+  };
+}
+
+export interface ScoreResponse {
+  overall_score: number;
+  breakdown: ScoreBreakdown;
+  weights: {
+    idea: number;
+    team: number;
+    traction: number;
+    market: number;
+  };
+  recommendation: string;
+  confidence: number;
+}
+
 export interface StartupData {
   name: string;
   tagline: string;
@@ -126,6 +168,119 @@ class ApiService {
   async checkChatHealth(): Promise<{ status: string; service: string; geminiConfigured: boolean }> {
     return this.makeRequest<{ status: string; service: string; geminiConfigured: boolean }>('/api/chat/health');
   }
+
+  /**
+   * Score startup using FastAPI scoring service
+   * Note: This calls the FastAPI service on port 8000
+   */
+  async scoreStartup(data: ScoreRequest): Promise<ScoreResponse> {
+    const FASTAPI_URL = import.meta.env.VITE_FASTAPI_URL || 'http://localhost:8000';
+    
+    try {
+      const response = await fetch(`${FASTAPI_URL}/score`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        
+        // Handle FastAPI validation errors
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        
+        if (errorData.detail) {
+          if (Array.isArray(errorData.detail)) {
+            // Pydantic validation errors
+            const errors = errorData.detail.map((err: any) => {
+              const field = err.loc ? err.loc.join('.') : 'unknown';
+              return `${field}: ${err.msg}`;
+            }).join(', ');
+            errorMessage = `Validation error: ${errors}`;
+          } else if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail;
+          } else {
+            errorMessage = JSON.stringify(errorData.detail);
+          }
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('FastAPI scoring request failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Critique startup using FastAPI critique agent
+   * Note: This calls the FastAPI service on port 8000
+   */
+  async critiqueStartup(
+    scoreReport: ScoreResponse | Record<string, any>,
+    pitchdeckSummary: Record<string, any>,
+    startupName?: string
+  ): Promise<CritiqueResponse> {
+    const FASTAPI_URL = import.meta.env.VITE_FASTAPI_URL || 'http://localhost:8000';
+    
+    try {
+      const response = await fetch(`${FASTAPI_URL}/critique`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          score_report: scoreReport,
+          pitchdeck_summary: pitchdeckSummary,
+          startup_name: startupName,
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        
+        // Handle FastAPI validation errors
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        
+        if (errorData.detail) {
+          if (Array.isArray(errorData.detail)) {
+            const errors = errorData.detail.map((err: any) => {
+              const field = err.loc ? err.loc.join('.') : 'unknown';
+              return `${field}: ${err.msg}`;
+            }).join(', ');
+            errorMessage = `Validation error: ${errors}`;
+          } else if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail;
+          } else {
+            errorMessage = JSON.stringify(errorData.detail);
+          }
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('FastAPI critique request failed:', error);
+      throw error;
+    }
+  }
+}
+
+export interface CritiqueResponse {
+  red_flags: Array<{
+    flag: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    explanation: string;
+    category: string;
+  }>;
+  overall_risk_label: 'low_risk' | 'moderate_risk' | 'high_risk' | 'very_high_risk';
+  summary: string;
+  analysis_timestamp?: string;
 }
 
 export const apiService = new ApiService();
