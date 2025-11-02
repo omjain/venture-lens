@@ -1,111 +1,113 @@
 import { Card } from "@/components/ui/card";
-import { useStartup } from "@/contexts/StartupContext";
-import { Loader2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Loader2, AlertTriangle } from "lucide-react";
+import { CritiqueResponse } from "@/services/api";
 
-const RiskHeatmap = () => {
-  const { analysis, isLoading } = useStartup();
-  
-  if (!analysis || !analysis.riskMRI) {
+interface RiskHeatmapProps {
+  critique?: CritiqueResponse;
+  isLoading?: boolean;
+}
+
+const RiskHeatmap = ({ critique, isLoading }: RiskHeatmapProps) => {
+  if (isLoading) {
     return (
       <Card className="p-6">
         <div className="flex items-center justify-center h-32">
-          {isLoading ? (
-            <div className="flex items-center space-x-2">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-muted-foreground">Analyzing risks...</span>
-            </div>
-          ) : (
-            <p className="text-muted-foreground">No risk analysis available</p>
-          )}
+          <div className="flex items-center space-x-2">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-muted-foreground">Analyzing risks...</span>
+          </div>
         </div>
       </Card>
     );
   }
 
-  const riskCategories = analysis.riskMRI.categories;
-  const overallScore = analysis.riskMRI.overallScore;
+  if (!critique || !critique.red_flags || critique.red_flags.length === 0) {
+    return (
+      <Card className="p-6">
+        <div className="flex items-center justify-center h-32">
+          <p className="text-muted-foreground">No risk analysis available</p>
+        </div>
+      </Card>
+    );
+  }
 
-  const getRiskColor = (score: number) => {
-    if (score <= 3) return "bg-success text-success-foreground";
-    if (score <= 6) return "bg-yellow-500 text-white";
-    return "bg-danger text-danger-foreground";
+  const redFlags = critique.red_flags;
+  
+  const getSeverityColor = (severity: string) => {
+    switch (severity.toLowerCase()) {
+      case 'high':
+      case 'critical':
+        return 'bg-danger text-danger-foreground';
+      case 'medium':
+        return 'bg-yellow-500 text-white';
+      case 'low':
+        return 'bg-success text-success-foreground';
+      default:
+        return 'bg-muted text-muted-foreground';
+    }
   };
 
-  const getRiskLevel = (score: number) => {
-    if (score <= 3) return "Low Risk";
-    if (score <= 6) return "Medium Risk";
-    return "High Risk";
+  const getRiskLevelColor = (level: string) => {
+    if (level.includes('high') || level.includes('very_high')) {
+      return 'text-danger';
+    }
+    if (level.includes('moderate')) {
+      return 'text-yellow-600';
+    }
+    return 'text-success';
   };
 
   return (
     <Card className="p-6">
       <div className="mb-6">
-        <h3 className="text-lg font-bold text-foreground mb-2">Risk MRI Analysis</h3>
+        <h3 className="text-lg font-bold text-foreground mb-2 flex items-center space-x-2">
+          <AlertTriangle className="w-5 h-5 text-danger" />
+          <span>VC Risk Analysis</span>
+        </h3>
         <p className="text-sm text-muted-foreground">
-          Comprehensive risk assessment across key investment areas
+          Critical red flags and risk assessment from VC perspective
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        {riskCategories.map((category) => (
-          <div key={category.name} className="space-y-3">
-            <div className="text-center">
-              <h4 className="font-semibold text-foreground text-sm mb-2">
-                {category.name}
-              </h4>
-              
-              <div className="relative w-20 h-20 mx-auto">
-                <div className="w-full h-full rounded-full border-4 border-muted flex items-center justify-center">
-                  <div
-                    className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-sm ${getRiskColor(category.score)}`}
-                  >
-                    {category.score}
-                  </div>
+      <div className="space-y-4 mb-6">
+        {redFlags.map((flag, index) => (
+          <div key={index} className="p-4 border border-border rounded-lg space-y-2">
+            <div className="flex items-start justify-between">
+              <div className="flex-1">
+                <div className="flex items-center space-x-2 mb-1">
+                  <Badge className={getSeverityColor(flag.severity)}>
+                    {flag.severity.toUpperCase()}
+                  </Badge>
+                  {flag.category && (
+                    <Badge variant="outline">{flag.category}</Badge>
+                  )}
                 </div>
-              </div>
-              
-              <div className="mt-2">
-                <div className={`text-xs font-medium ${
-                  category.score <= 3 ? "text-success" :
-                  category.score <= 6 ? "text-yellow-600" : "text-danger"
-                }`}>
-                  {getRiskLevel(category.score)}
-                </div>
+                <h4 className="font-semibold text-foreground">{flag.flag}</h4>
+                <p className="text-sm text-muted-foreground mt-1">{flag.explanation}</p>
               </div>
             </div>
-            
-            <p className="text-xs text-muted-foreground text-center">
-              {category.description}
-            </p>
           </div>
         ))}
       </div>
 
-      <div className="mt-6 pt-6 border-t border-border">
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <div className="w-3 h-3 bg-success rounded-full"></div>
-              <span className="text-muted-foreground">Low (1-3)</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-              <span className="text-muted-foreground">Medium (4-6)</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <div className="w-3 h-3 bg-danger rounded-full"></div>
-              <span className="text-muted-foreground">High (7-10)</span>
-            </div>
+      {critique.summary && (
+        <div className="mb-6 p-4 bg-secondary rounded-lg">
+          <h4 className="font-semibold text-foreground mb-2">Summary</h4>
+          <p className="text-sm text-muted-foreground">{critique.summary}</p>
+        </div>
+      )}
+
+      <div className="pt-6 border-t border-border">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-muted-foreground">Overall Risk Level:</span>
+            <Badge className={getSeverityColor(critique.overall_risk_label)}>
+              {critique.overall_risk_label.replace('_', ' ').toUpperCase()}
+            </Badge>
           </div>
-          
-          <div className="text-right">
-            <div className="font-semibold text-foreground">Overall Risk Score</div>
-            <div className={`text-lg font-bold ${
-              overallScore <= 3 ? "text-success" :
-              overallScore <= 6 ? "text-yellow-600" : "text-danger"
-            }`}>
-              {overallScore}/10
-            </div>
+          <div className={`text-lg font-bold ${getRiskLevelColor(critique.overall_risk_label)}`}>
+            {critique.red_flags.length} Red Flag{critique.red_flags.length !== 1 ? 's' : ''}
           </div>
         </div>
       </div>

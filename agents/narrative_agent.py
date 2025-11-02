@@ -1,16 +1,24 @@
 """
-AI Narrative Agent for Venture Lens
-Uses LangChain SDK agent framework to generate 3-part startup narratives
+Gemini-native Narrative Agent for Venture Lens
+Generates compelling 3-part narratives with tagline for investors
 """
 import os
 import json
-from typing import Dict, Any, Optional, List
-from datetime import datetime, UTC
-from pydantic import BaseModel, Field
-
-from rich.console import Console
-from rich.logging import RichHandler
+from typing import Dict, Any, Optional
+from datetime import datetime
 import logging
+
+# Import core LLM service
+try:
+    import sys
+    core_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'core')
+    if os.path.exists(core_path):
+        sys.path.insert(0, core_path)
+    from llm_service import get_service
+    CORE_LLM_AVAILABLE = True
+except ImportError as e:
+    CORE_LLM_AVAILABLE = False
+    logging.warning(f"Core LLM service not available: {e}")
 
 # Redis client (optional - graceful fallback if not available)
 redis_client = None
@@ -26,282 +34,147 @@ try:
         logging.info("✅ Redis connection established")
     except Exception as e:
         REDIS_AVAILABLE = False
+        logging.warning(f"⚠️ Redis not available: {e}")
 except ImportError:
     REDIS_AVAILABLE = False
+    logging.warning("⚠️ Redis library not installed")
 
-# Setup rich logging
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(message)s",
-    datefmt="[%X]",
-    handlers=[RichHandler(rich_tracebacks=True, show_path=False)]
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
-
 logger = logging.getLogger("narrative_agent")
-console = Console()
-
-
-# Pydantic model for structured output
-class NarrativeStructure(BaseModel):
-    """Structured output model for 3-part narrative"""
-    vision: str = Field(..., description="Company's vision - where they want to be, the future they're building (2-3 sentences)")
-    differentiation: str = Field(..., description="What makes this startup unique - competitive advantage, unique value proposition (2-3 sentences)")
-    timing: str = Field(..., description="Why now is the right time - market timing, technology readiness, trend alignment (2-3 sentences)")
-
-
-def create_narrative_agent():
-    """
-    Create a LangChain agent for narrative generation
-    Uses structured output and agent framework
-    """
-    try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
-        from langchain_core.prompts import ChatPromptTemplate
-        
-        # Check credentials
-        project_id = os.getenv("GEMINI_PROJECT_ID")
-        location = os.getenv("GEMINI_LOCATION")
-        api_key = os.getenv("GEMINI_API_KEY")
-        
-        # Initialize LLM
-        if project_id and location:
-            # Vertex AI
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash-exp",
-                project=project_id,
-                location=location,
-                temperature=0.7,
-                max_output_tokens=1024,
-            )
-            logger.info("✅ Narrative agent initialized with Vertex AI")
-        elif api_key and api_key.startswith("AIza"):
-            # Gemini API
-            llm = ChatGoogleGenerativeAI(
-                model="gemini-2.0-flash-exp",
-                google_api_key=api_key,
-                temperature=0.7,
-                max_output_tokens=1024,
-            )
-            logger.info("✅ Narrative agent initialized with Gemini API")
-        else:
-            logger.warning("⚠️ No valid credentials, using mock agent")
-            return None
-        
-        # Create prompt template for agent (no format instructions needed - SDK handles structure)
-        prompt_template = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert narrative agent specializing in creating compelling startup stories for investors.
-
-Your task is to analyze startup information and generate a crisp, compelling 3-part narrative.
-
-Generate narratives that are:
-- Concise (2-3 sentences per part)
-- Investor-focused
-- Compelling and memorable
-- Based on the actual startup data provided"""),
-            ("user", """Analyze this startup and create a 3-part narrative:
-
-Startup Data:
-{startup_data}
-
-Create the narrative with these three parts:
-1. VISION: Where they're heading, the future state (2-3 sentences)
-2. DIFFERENTIATION: What makes them unique (2-3 sentences)
-3. TIMING: Why now is the right time (2-3 sentences)""")
-        ])
-        
-        # Create agent chain with structured output (SDK handles schema automatically)
-        chain = prompt_template | llm.with_structured_output(NarrativeStructure)
-        
-        logger.info("✅ Narrative agent chain created successfully")
-        return chain
-        
-    except ImportError as e:
-        logger.warning(f"⚠️ LangChain not available: {e}. Install: pip install langchain-google-genai langchain-core")
-        return None
-    except Exception as e:
-        logger.error(f"❌ Failed to create narrative agent: {e}")
-        return None
-
-
-# Global agent instance (lazy initialization)
-_narrative_agent = None
-
-
-def get_narrative_agent():
-    """Get or create narrative agent instance"""
-    global _narrative_agent
-    if _narrative_agent is None:
-        _narrative_agent = create_narrative_agent()
-    return _narrative_agent
 
 
 async def generate_narrative(
     startup_data: Dict[str, Any],
-    startup_id: Optional[str] = None,
-    use_cache: bool = True
+    startup_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Generate 3-part narrative using LangChain agent framework
+    Generate 3-part narrative with tagline using Gemini 1.5 Pro
     
     Args:
-        startup_data: Startup information as dictionary
-        startup_id: Unique identifier for caching (optional)
-        use_cache: Whether to use Redis cache (default: True)
+        startup_data: Structured JSON with fields (name, description, problem, solution, traction, market, team, etc.)
+        startup_id: Optional identifier for Redis caching
         
     Returns:
-        Dictionary with vision, differentiation, and timing narratives
+        Dictionary with vision, differentiation, timing, and tagline
     """
-    logger.info("📖 Starting narrative generation with agent")
+    logger.info("📖 Starting narrative generation")
     
-    # Check cache if Redis available and startup_id provided
-    if use_cache and REDIS_AVAILABLE and startup_id:
+    if not CORE_LLM_AVAILABLE:
+        raise ImportError(
+            "Core LLM service not available. "
+            "Please ensure core/llm_service.py exists and google-generativeai is installed."
+        )
+    
+    # Check Redis cache if startup_id provided
+    if startup_id and REDIS_AVAILABLE:
         try:
             cache_key = f"narrative:{startup_id}"
             cached = redis_client.get(cache_key)
             if cached:
                 logger.info(f"   ✓ Found cached narrative for startup_id: {startup_id}")
                 cached_data = json.loads(cached)
-                # Add model info if missing
-                if "model" not in cached_data:
-                    cached_data["model"] = "cached"
                 return cached_data
         except Exception as e:
             logger.warning(f"   ⚠️ Cache read failed: {e}")
     
-    # Get agent
-    agent = get_narrative_agent()
+    # Prepare JSON content
+    json_content = json.dumps(startup_data, indent=2)
     
-    if agent is None:
-        logger.warning("⚠️ Agent not available, using fallback")
-        return generate_fallback_narrative(startup_data)
+    # Compose prompt for Gemini
+    prompt = f"""You are a professional pitch writer.
+Create a concise 3-part narrative that an investor would love.
+
+Return ONLY valid JSON like:
+{{
+  "vision": "<describe startup's purpose and mission>",
+  "differentiation": "<what makes it unique or defensible>",
+  "timing": "<why now is the right time for this product>",
+  "tagline": "<a short 1-line summary pitch>"
+}}
+
+Startup Data:
+{json_content}
+
+Make the narrative compelling, concise, and investor-focused. Keep tagline under 100 characters."""
     
     try:
-        logger.info("🤖 Invoking narrative agent")
+        logger.info("🤖 Calling Gemini 1.5 Pro for narrative generation")
         
-        # Format startup data for agent
-        startup_data_str = json.dumps(startup_data, indent=2)
+        llm_service = get_service()
         
-        # Invoke agent with structured output (SDK handles Pydantic conversion automatically)
-        result = await agent.ainvoke({
-            "startup_data": startup_data_str
-        })
+        # Call Gemini with text-only
+        response_text = llm_service.invoke(
+            model="gemini-1.5-pro",
+            prompt=prompt,
+            pdf_bytes=None
+        )
         
-        # Convert Pydantic model to dict (use model_dump for Pydantic V2)
-        if hasattr(result, 'model_dump'):
-            narrative_dict = result.model_dump()
-        elif hasattr(result, 'dict'):
-            narrative_dict = result.dict()  # Fallback for older Pydantic
-        else:
-            narrative_dict = {
-                "vision": getattr(result, "vision", ""),
-                "differentiation": getattr(result, "differentiation", ""),
-                "timing": getattr(result, "timing", "")
-            }
-        
-        # Add metadata
-        narrative_result = {
-            **narrative_dict,
-            "generated_at": datetime.now(UTC).isoformat(),
-            "model": "gemini-2.0-flash-exp"
-        }
-        
-        # Validate structure
-        narrative_result = normalize_narrative_response(narrative_result)
-        
-        # Cache the result
-        if use_cache and REDIS_AVAILABLE and startup_id:
-            try:
-                cache_key = f"narrative:{startup_id}"
-                redis_client.setex(
-                    cache_key,
-                    86400,  # 24 hours
-                    json.dumps(narrative_result)
-                )
-                logger.info(f"   ✓ Cached narrative for startup_id: {startup_id}")
-            except Exception as e:
-                logger.warning(f"   ⚠️ Cache write failed: {e}")
-        
-        logger.info("✅ Narrative generation completed successfully")
-        return narrative_result
+        logger.info("✅ Gemini API call successful")
         
     except Exception as e:
-        logger.error(f"✗ Agent invocation failed: {e}")
-        logger.info("   Using fallback narrative")
-        return generate_fallback_narrative(startup_data)
-
-
-def normalize_narrative_response(data: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Normalize and validate narrative response
+        logger.error(f"❌ Gemini API call failed: {e}")
+        raise Exception(f"Failed to call Gemini API: {str(e)}")
     
-    Args:
-        data: Raw narrative response
+    # Parse JSON response
+    try:
+        # Clean response text (remove markdown code blocks if present)
+        json_text = response_text.strip()
         
-    Returns:
-        Normalized narrative structure
-    """
-    required_fields = ["vision", "differentiation", "timing"]
+        if "```json" in json_text:
+            json_start = json_text.find("```json") + 7
+            json_end = json_text.find("```", json_start)
+            json_text = json_text[json_start:json_end].strip()
+        elif "```" in json_text:
+            json_start = json_text.find("```") + 3
+            json_end = json_text.find("```", json_start)
+            json_text = json_text[json_start:json_end].strip()
+        
+        # Parse JSON
+        narrative_result = json.loads(json_text)
+        
+        logger.info("✅ Successfully parsed JSON response")
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"❌ Failed to parse JSON response: {e}")
+        logger.error(f"   Response text: {response_text[:500]}...")
+        raise Exception(f"Failed to parse JSON response: {str(e)}")
     
-    narrative = {}
-    for field in required_fields:
-        narrative[field] = data.get(field, "")
-        if not narrative[field] or len(narrative[field].strip()) < 10:
-            narrative[field] = f"[{field.title()}] Narrative not generated. Please provide more startup details."
+    # Validate required keys
+    required_keys = ["vision", "differentiation", "timing", "tagline"]
+    for key in required_keys:
+        if key not in narrative_result:
+            raise ValueError(f"Missing required key: {key}")
     
-    # Add metadata if not present
-    if "generated_at" not in narrative:
-        narrative["generated_at"] = datetime.now(UTC).isoformat()
-    if "model" not in narrative:
-        narrative["model"] = "unknown"
+    # Validate tagline length
+    tagline = narrative_result.get("tagline", "")
+    if len(tagline) > 100:
+        logger.warning(f"⚠️ Tagline length {len(tagline)} exceeds 100 chars, truncating")
+        narrative_result["tagline"] = tagline[:97] + "..."
     
-    return narrative
-
-
-def generate_fallback_narrative(startup_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate fallback narrative using rule-based extraction"""
-    logger.info("   Using rule-based fallback narrative")
+    # Add metadata
+    narrative_result["generated_at"] = datetime.utcnow().isoformat()
+    narrative_result["model"] = "gemini-1.5-pro"
     
-    startup_name = startup_data.get("name") or startup_data.get("startup_name") or "the startup"
-    description = startup_data.get("description", "")
-    problem = startup_data.get("problem", "")
-    solution = startup_data.get("solution", "")
-    market = startup_data.get("market", "")
-    traction = startup_data.get("traction", "")
-    sector = startup_data.get("sector", "") or startup_data.get("industry", "")
+    # Cache in Redis if startup_id provided
+    if startup_id and REDIS_AVAILABLE:
+        try:
+            cache_key = f"narrative:{startup_id}"
+            # TTL: 12 hours = 43200 seconds
+            redis_client.setex(
+                cache_key,
+                43200,  # 12 hours
+                json.dumps(narrative_result)
+            )
+            logger.info(f"   ✓ Cached narrative for startup_id: {startup_id} (TTL: 12h)")
+        except Exception as e:
+            logger.warning(f"   ⚠️ Cache write failed: {e}")
     
-    # Vision
-    vision = f"{startup_name} envisions a future where {description.lower() if description else 'innovative solutions transform the market'}. "
-    if solution:
-        vision += f"By {solution.lower()[:100]}, they aim to revolutionize the {sector or 'industry'}. "
-    vision += "Their mission is to create lasting impact through technology and innovation."
-    
-    # Differentiation
-    differentiation = f"{startup_name} stands out through "
-    if solution:
-        differentiation += f"their unique approach to {solution.lower()[:80]}. "
-    else:
-        differentiation += "their innovative methodology. "
-    if traction:
-        differentiation += f"With {traction.lower()[:100]}, they've demonstrated early success. "
-    differentiation += "Their competitive advantage lies in combining technical excellence with market insights."
-    
-    # Timing
-    timing = f"The timing for {startup_name} is optimal because "
-    if market:
-        timing += f"the {market.lower()[:80]} is at an inflection point. "
-    else:
-        timing += "market conditions are favorable. "
-    if traction:
-        timing += f"Early indicators like {traction.lower()[:80]} show strong momentum. "
-    timing += "Now is the moment to scale and capture market share."
-    
-    return {
-        "vision": vision,
-        "differentiation": differentiation,
-        "timing": timing,
-        "generated_at": datetime.now(UTC).isoformat(),
-        "model": "fallback"
-    }
+    logger.info("✅ Narrative generation complete")
+    return narrative_result
 
 
 async def get_cached_narrative(startup_id: str) -> Optional[Dict[str, Any]]:
@@ -321,6 +194,7 @@ async def get_cached_narrative(startup_id: str) -> Optional[Dict[str, Any]]:
         cache_key = f"narrative:{startup_id}"
         cached = redis_client.get(cache_key)
         if cached:
+            logger.info(f"   ✓ Retrieved cached narrative for startup_id: {startup_id}")
             return json.loads(cached)
         return None
     except Exception as e:
@@ -343,9 +217,13 @@ async def clear_narrative_cache(startup_id: str) -> bool:
     
     try:
         cache_key = f"narrative:{startup_id}"
-        redis_client.delete(cache_key)
-        logger.info(f"✓ Cleared cache for startup_id: {startup_id}")
-        return True
+        deleted = redis_client.delete(cache_key)
+        if deleted:
+            logger.info(f"✓ Cleared cache for startup_id: {startup_id}")
+            return True
+        else:
+            logger.info(f"   Cache key not found for startup_id: {startup_id}")
+            return False
     except Exception as e:
         logger.warning(f"Cache clear failed: {e}")
         return False

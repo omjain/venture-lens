@@ -24,4 +24,8 @@ psycopg2-binary
 redis
 langchain-core
 langchain-google-genai
+google-generativeai>=0.3.0
+pdfplumber>=0.9.0
+jinja2>=3.1.0
+pdfkit>=1.0.0
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Upload, FileText, MessageCircle, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,10 +11,22 @@ import BenchmarkChart from "@/components/dashboard/BenchmarkChart";
 import AIChat from "@/components/dashboard/AIChat";
 import ScoringForm from "@/components/dashboard/ScoringForm";
 import CritiqueForm from "@/components/dashboard/CritiqueForm";
+import NarrativeDisplay from "@/components/dashboard/NarrativeDisplay";
+import ScoringBreakdown from "@/components/dashboard/ScoringBreakdown";
+import PdfEvaluator from "@/components/dashboard/PdfEvaluator";
+import { useStartup } from "@/contexts/StartupContext";
 
 const Index = () => {
   const [hasData, setHasData] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const { evaluation, downloadReport, isLoading } = useStartup();
+
+  // Auto-show results when evaluation exists (e.g., from PDF evaluator)
+  useEffect(() => {
+    if (evaluation?.evaluation) {
+      setHasData(true);
+    }
+  }, [evaluation]);
 
   return (
     <div className="min-h-screen bg-dashboard-bg">
@@ -52,10 +64,17 @@ const Index = () => {
                   <Upload className="w-4 h-4" />
                   <span>New Analysis</span>
                 </Button>
-                <Button size="sm" className="flex items-center space-x-2">
-                  <Download className="w-4 h-4" />
-                  <span>Export Report</span>
-                </Button>
+                {evaluation?.reportId && (
+                  <Button 
+                    size="sm" 
+                    className="flex items-center space-x-2"
+                    onClick={() => evaluation.reportId && downloadReport(evaluation.reportId)}
+                    disabled={isLoading}
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Export Report</span>
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -77,17 +96,44 @@ const Index = () => {
                 <UploadZone onUpload={() => setHasData(true)} />
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left Column - Startup Overview */}
-                <div className="lg:col-span-1 space-y-6">
-                  <StartupSummary />
-                  <DealMemo />
-                </div>
+              <div className="space-y-6">
+                {/* Narrative Display - Full Width */}
+                {evaluation?.evaluation?.narrative && (
+                  <NarrativeDisplay 
+                    narrative={evaluation.evaluation.narrative}
+                    isLoading={isLoading}
+                  />
+                )}
 
-                {/* Right Column - Analytics */}
-                <div className="lg:col-span-2 space-y-6">
-                  <RiskHeatmap />
-                  <BenchmarkChart />
+                {/* Main Grid */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Left Column - Startup Overview */}
+                  <div className="lg:col-span-1 space-y-6">
+                    <PdfEvaluator />
+                    <StartupSummary />
+                    <DealMemo />
+                  </div>
+
+                  {/* Right Column - Analytics */}
+                  <div className="lg:col-span-2 space-y-6">
+                    {/* Scoring Breakdown */}
+                    {evaluation?.evaluation?.scores && (
+                      <ScoringBreakdown scoreData={evaluation.evaluation.scores} />
+                    )}
+                    
+                    {/* Risk/Critique */}
+                    {evaluation?.evaluation?.critique && (
+                      <RiskHeatmap critique={evaluation.evaluation.critique} />
+                    )}
+                    
+                    {/* Benchmark Analysis */}
+                    {evaluation?.evaluation?.benchmarks && (
+                      <BenchmarkChart 
+                        benchmarks={evaluation.evaluation.benchmarks}
+                        isLoading={isLoading}
+                      />
+                    )}
+                  </div>
                 </div>
               </div>
             )}

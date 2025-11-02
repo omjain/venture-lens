@@ -6,6 +6,7 @@ And /ingest for data ingestion agent
 """
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, List, Any
 import os
@@ -31,6 +32,18 @@ app = FastAPI(
     description="AI-powered startup scoring with weighted Venture Lens metrics",
     version="1.0.0"
 )
+
+# Import and include evaluation router
+try:
+    import sys
+    routes_path = os.path.join(os.path.dirname(__file__), '..', 'routes')
+    if os.path.exists(routes_path):
+        sys.path.insert(0, routes_path)
+    from evaluation_router import router as evaluation_router
+    app.include_router(evaluation_router)
+    print("✅ Evaluation router loaded")
+except ImportError as e:
+    print(f"⚠️ Evaluation router not available: {e}")
 
 # CORS configuration - Allow all localhost ports for development
 app.add_middleware(
@@ -613,7 +626,7 @@ except ImportError as e:
     INGESTION_AGENT_AVAILABLE = False
 
 try:
-    from critique_agent import analyze_critique, save_critique_to_db, normalize_critique_response
+    from critique_agent import analyze_critique, critique_with_logging
     CRITIQUE_AGENT_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ Critique agent not available: {e}")
@@ -626,24 +639,51 @@ except ImportError as e:
     print(f"⚠️ Narrative agent not available: {e}")
     NARRATIVE_AGENT_AVAILABLE = False
 
+try:
+    from benchmark_agent import benchmark, benchmark_with_logging
+    BENCHMARK_AGENT_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Benchmark agent not available: {e}")
+    BENCHMARK_AGENT_AVAILABLE = False
+
 
 class IngestionURLRequest(BaseModel):
     """Request model for URL ingestion"""
     url: str = Field(..., description="URL to scrape and ingest")
 
 
+class IngestionRequest(BaseModel):
+    """Request model for new multimodal ingestion"""
+    startup_name: str = Field(..., description="Name of the startup")
+    description: str = Field(..., description="Text description of the startup")
+    urls: Optional[List[str]] = Field(None, description="Optional list of URLs to scrape")
+
+
 @app.post("/ingest")
 async def ingest_endpoint(
+    startup_name: str = Form(...),
+    description: str = Form(...),
     file: Optional[UploadFile] = File(None),
-    url: Optional[str] = Form(None)
+    urls: Optional[str] = Form(None)
 ):
     """
-    Data Ingestion Agent endpoint
-    Accepts either PDF file upload or URL for scraping
+    Multi-Modal Ingestion Agent endpoint
+    Uses Gemini 1.5 Pro with multimodal support (PDF + text)
     
-    Usage:
-    - PDF upload: POST with multipart/form-data, include 'file' field
-    - URL scraping: POST with form-data, include 'url' field
+    Accepts form-data (multipart/form-data):
+    - startup_name: Name of the startup (required)
+    - description: Text description (required)
+    - file: Optional PDF file upload
+    - urls: Optional JSON array string (e.g., '["url1", "url2"]') or comma-separated URLs
+    
+    Returns structured JSON with:
+    - startup_name
+    - problem
+    - solution
+    - traction
+    - team
+    - market
+    - financials
     """
     if not INGESTION_AGENT_AVAILABLE:
         raise HTTPException(
@@ -652,38 +692,51 @@ async def ingest_endpoint(
         )
     
     try:
-        # Validate input
-        if not file and not url:
-            raise HTTPException(
-                status_code=400,
-                detail="Either 'file' (PDF) or 'url' must be provided"
-            )
+        # Parse URLs from form field
+        url_list = []
+        if urls:
+            try:
+                # Try parsing as JSON array
+                import json
+                url_list = json.loads(urls)
+                if not isinstance(url_list, list):
+                    url_list = []
+            except:
+                # Fallback: treat as comma-separated
+                url_list = [u.strip() for u in urls.split(',') if u.strip()]
         
-        if file and url:
-            raise HTTPException(
-                status_code=400,
-                detail="Provide either 'file' OR 'url', not both"
-            )
+        # Validate URLs
+        if url_list:
+            for url in url_list:
+                if not isinstance(url, str) or not url.startswith(('http://', 'https://')):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid URL format: {url}. Must start with http:// or https://"
+                    )
         
-        # Process PDF
+        # Process PDF if present
+        pdf_bytes = None
+        filename = None
         if file:
             if not file.filename or not file.filename.lower().endswith('.pdf'):
                 raise HTTPException(status_code=400, detail="File must be a PDF")
             
-            file_bytes = await file.read()
-            result = await ingest_data(
-                pdf_file=file_bytes,
-                pdf_filename=file.filename
-            )
-            return result
+            pdf_bytes = await file.read()
+            filename = file.filename
         
-        # Process URL
-        if url:
-            if not url.startswith(('http://', 'https://')):
-                raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
-            
-            result = await ingest_data(url=url)
-            return result
+        # Import the new ingestion endpoint
+        from ingestion_agent import ingest_endpoint as ingest_handler
+        
+        # Call the multimodal ingestion
+        result = await ingest_handler(
+            startup_name=startup_name,
+            description=description,
+            file=pdf_bytes,
+            filename=filename,
+            urls=url_list
+        )
+        
+        return result
             
     except HTTPException:
         raise
@@ -700,19 +753,23 @@ async def ingest_endpoint(
 
 class CritiqueRequest(BaseModel):
     """Request model for critique analysis"""
-    score_report: Dict[str, Any] = Field(..., description="Startup scoring report")
-    pitchdeck_summary: Dict[str, Any] = Field(..., description="Pitch deck analysis summary")
-    startup_name: Optional[str] = Field(None, description="Startup name for database logging")
+    score_report: Dict[str, Any] = Field(..., description="Structured JSON from scoring_agent (includes market, product, team, traction, risk)")
+    pitchdeck_summary: str = Field(..., description="Pitch deck summary text")
+    startup_id: Optional[str] = Field(None, description="Optional startup identifier for database logging")
 
 
 @app.post("/critique")
 async def critique_endpoint(request: CritiqueRequest):
     """
-    AI Critique Agent endpoint
-    Analyzes startup critically as a VC, identifies red flags with severity levels
+    Gemini-native Critique Agent endpoint
+    Analyzes startup critically as a VC, identifies 3-5 red flags with severity levels
     
-    Input: Combined JSON with score_report and pitchdeck_summary
-    Output: Structured JSON with red flags, severity levels, and overall risk label
+    Input: 
+    - score_report: Structured JSON from scoring_agent
+    - pitchdeck_summary: Pitch deck summary text
+    - startup_id: Optional identifier for database logging
+    
+    Output: Structured JSON with red flags, severity levels, and overall risk level
     """
     if not CRITIQUE_AGENT_AVAILABLE:
         raise HTTPException(
@@ -725,25 +782,15 @@ async def critique_endpoint(request: CritiqueRequest):
         if not request.score_report:
             raise HTTPException(status_code=400, detail="score_report is required")
         
-        if not request.pitchdeck_summary:
-            raise HTTPException(status_code=400, detail="pitchdeck_summary is required")
+        if not request.pitchdeck_summary or not request.pitchdeck_summary.strip():
+            raise HTTPException(status_code=400, detail="pitchdeck_summary is required and must not be empty")
         
-        # Perform critique analysis
-        critique_result = await analyze_critique(
+        # Perform critique analysis with logging
+        critique_result = await critique_with_logging(
             score_report=request.score_report,
-            pitchdeck_summary=request.pitchdeck_summary
+            pitchdeck_summary=request.pitchdeck_summary,
+            startup_id=request.startup_id
         )
-        
-        # Save to database if PostgreSQL is configured (optional)
-        startup_name = request.startup_name or "unknown"
-        if has_db_config():
-            try:
-                db_connection = await get_db_connection()
-                if db_connection:
-                    await save_critique_to_db(startup_name, critique_result, db_connection)
-            except Exception as db_error:
-                # Log but don't fail the request if DB save fails
-                print(f"⚠️ Database save failed: {db_error}")
         
         return critique_result
         
@@ -793,20 +840,19 @@ async def get_db_connection():
 
 class NarrativeRequest(BaseModel):
     """Request model for narrative generation"""
-    startup_data: Dict[str, Any] = Field(..., description="Startup information as JSON")
-    startup_id: Optional[str] = Field(None, description="Unique startup identifier for caching")
-    use_cache: Optional[bool] = Field(True, description="Whether to use Redis cache")
+    startup_data: Dict[str, Any] = Field(..., description="Structured JSON with fields (name, description, problem, solution, traction, market, team, etc.)")
+    startup_id: Optional[str] = Field(None, description="Unique startup identifier for Redis caching (12h TTL)")
 
 
 @app.post("/narrative")
 async def narrative_endpoint(request: NarrativeRequest):
     """
-    AI Narrative Agent endpoint
-    Generates a crisp 3-part narrative: Vision, Differentiation, Timing
+    Gemini-native Narrative Agent endpoint
+    Generates a compelling 3-part narrative: Vision, Differentiation, Timing, plus Tagline
     
-    Input: Startup JSON data
-    Output: Structured JSON with vision, differentiation, and timing narratives
-    Uses Redis caching (optional) with startup_id as key
+    Input: Structured startup JSON data
+    Output: Structured JSON with vision, differentiation, timing, and tagline
+    Uses Redis caching with startup_id as key (12-hour TTL)
     """
     if not NARRATIVE_AGENT_AVAILABLE:
         raise HTTPException(
@@ -819,11 +865,10 @@ async def narrative_endpoint(request: NarrativeRequest):
         if not request.startup_data:
             raise HTTPException(status_code=400, detail="startup_data is required")
         
-        # Generate narrative
+        # Generate narrative (caching is automatic if startup_id provided)
         narrative_result = await generate_narrative(
             startup_data=request.startup_data,
-            startup_id=request.startup_id,
-            use_cache=request.use_cache
+            startup_id=request.startup_id
         )
         
         return narrative_result
@@ -890,6 +935,85 @@ async def clear_narrative_cache_endpoint(startup_id: str):
             status_code=500,
             detail=f"Failed to clear cache: {str(e)}"
         )
+
+
+# ============================================================================
+# Benchmark Agent
+# ============================================================================
+
+class BenchmarkRequest(BaseModel):
+    """Request model for benchmark analysis"""
+    score_report: Dict[str, Any] = Field(..., description="Structured JSON from scoring_agent with industry, stage, metrics (funding, ARR, users, CAC, LTV, churn, etc.)")
+    startup_id: Optional[str] = Field(None, description="Optional startup identifier for database logging")
+
+
+@app.post("/benchmark")
+async def benchmark_endpoint(request: BenchmarkRequest):
+    """
+    Gemini-native Benchmark Agent endpoint
+    Compares startup metrics against global sector averages
+    
+    Input: Structured JSON from scoring_agent with industry, stage, and metrics
+    Output: Benchmark analysis with comparisons, percentile rankings, and sector averages
+    Logs comparisons to startup_benchmarks table if startup_id provided
+    """
+    if not BENCHMARK_AGENT_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Benchmark agent not available. Make sure agents/benchmark_agent.py exists."
+        )
+    
+    try:
+        # Validate input
+        if not request.score_report:
+            raise HTTPException(status_code=400, detail="score_report is required")
+        
+        # Perform benchmark analysis with logging
+        benchmark_result = await benchmark_with_logging(
+            score_report=request.score_report,
+            startup_id=request.startup_id
+        )
+        
+        return benchmark_result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Benchmark analysis failed: {str(e)}"
+        )
+
+
+# ============================================================================
+# Report Download Endpoint
+# ============================================================================
+
+@app.get("/reports/{report_id}")
+async def download_report(report_id: str):
+    """
+    Download generated PDF report
+    
+    Args:
+        report_id: Report identifier (startup_id)
+        
+    Returns:
+        PDF file download
+    """
+    reports_dir = Path("reports")
+    pdf_path = reports_dir / f"{report_id}.pdf"
+    
+    if not pdf_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Report not found for report_id: {report_id}"
+        )
+    
+    return FileResponse(
+        path=str(pdf_path),
+        filename=f"{report_id}.pdf",
+        media_type="application/pdf"
+    )
 
 
 if __name__ == "__main__":

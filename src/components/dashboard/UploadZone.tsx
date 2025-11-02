@@ -14,6 +14,7 @@ interface UploadZoneProps {
 const UploadZone = ({ onUpload }: UploadZoneProps) => {
   const [isDragActive, setIsDragActive] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [formData, setFormData] = useState({
     startupName: '',
     deckText: '',
@@ -21,7 +22,7 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
     publicUrls: '',
   });
   
-  const { analyzeStartup, isLoading, error } = useStartup();
+  const { analyzeStartup, evaluateStartup, isLoading, error } = useStartup();
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -43,24 +44,48 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
     setShowForm(true);
   };
 
+  const handlePdfUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        setSelectedFile(file);
+      } else {
+        alert('Please select a PDF file');
+        e.target.value = ''; // Reset input
+      }
+    }
+  };
+
   const handleAnalyze = async () => {
     if (!formData.startupName.trim()) {
       alert('Please enter a startup name');
       return;
     }
 
-    const publicUrls = formData.publicUrls
-      .split('\n')
-      .map(url => url.trim())
-      .filter(url => url.length > 0);
-
     try {
-      await analyzeStartup({
-        startupName: formData.startupName,
-        deckText: formData.deckText || undefined,
-        transcriptText: formData.transcriptText || undefined,
-        publicUrls: publicUrls.length > 0 ? publicUrls : undefined,
-      });
+      // If PDF is uploaded, use evaluateStartup (supports PDF + text)
+      if (selectedFile) {
+        const description = `${formData.deckText || ''}\n\n${formData.transcriptText || ''}`.trim();
+        await evaluateStartup({
+          startupName: formData.startupName,
+          description: description || undefined,
+          file: selectedFile,
+        });
+      } else {
+        // Otherwise, use original analyzeStartup (text only)
+        const publicUrls = formData.publicUrls
+          .split('\n')
+          .map(url => url.trim())
+          .filter(url => url.length > 0);
+
+        await analyzeStartup({
+          startupName: formData.startupName,
+          deckText: formData.deckText || undefined,
+          transcriptText: formData.transcriptText || undefined,
+          publicUrls: publicUrls.length > 0 ? publicUrls : undefined,
+        });
+      }
       onUpload();
     } catch (err) {
       console.error('Analysis failed:', err);
@@ -76,6 +101,7 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
           </h3>
           
           <div className="space-y-4">
+            {/* Startup Name - Required */}
             <div>
               <Label htmlFor="startupName">Startup Name *</Label>
               <Input
@@ -87,6 +113,7 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
               />
             </div>
 
+            {/* Pitch Deck Content */}
             <div>
               <Label htmlFor="deckText">Pitch Deck Content</Label>
               <Textarea
@@ -98,6 +125,7 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
               />
             </div>
 
+            {/* Interview/Transcript */}
             <div>
               <Label htmlFor="transcriptText">Interview/Transcript</Label>
               <Textarea
@@ -109,6 +137,7 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
               />
             </div>
 
+            {/* Public URLs */}
             <div>
               <Label htmlFor="publicUrls">Public URLs (one per line)</Label>
               <Textarea
@@ -118,6 +147,42 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
                 placeholder="https://example.com/news&#10;https://crunchbase.com/company/startup"
                 className="mt-1 min-h-[80px]"
               />
+            </div>
+
+            {/* Optional PDF Upload - At the end */}
+            <div>
+              <Label htmlFor="pdfUpload">Upload PDF (Optional)</Label>
+              <Input
+                id="pdfUpload"
+                type="file"
+                accept=".pdf,application/pdf"
+                onChange={handlePdfUpload}
+                className="mt-1"
+              />
+              {selectedFile && (
+                <div className="mt-2 p-2 bg-secondary rounded-lg flex items-center justify-between">
+                  <span className="text-sm text-foreground flex items-center space-x-2">
+                    <FileText className="w-4 h-4" />
+                    <span>{selectedFile.name}</span>
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedFile(null);
+                      const input = document.getElementById('pdfUpload') as HTMLInputElement;
+                      if (input) input.value = '';
+                    }}
+                    className="h-6 px-2"
+                  >
+                    Remove
+                  </Button>
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground mt-1">
+                Optional: Upload a PDF pitch deck to enhance the analysis
+              </p>
             </div>
 
             {error && (
@@ -143,7 +208,16 @@ const UploadZone = ({ onUpload }: UploadZoneProps) => {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => setShowForm(false)}
+                onClick={() => {
+                  setShowForm(false);
+                  setSelectedFile(null);
+                  setFormData({
+                    startupName: '',
+                    deckText: '',
+                    transcriptText: '',
+                    publicUrls: '',
+                  });
+                }}
                 disabled={isLoading}
               >
                 Cancel

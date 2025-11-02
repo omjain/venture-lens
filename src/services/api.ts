@@ -269,6 +269,120 @@ class ApiService {
       throw error;
     }
   }
+
+  /**
+   * Unified evaluation endpoint - runs full pipeline
+   * Calls FastAPI /evaluate endpoint which orchestrates all agents
+   */
+  async evaluateStartup(
+    options: {
+      file?: File;
+      url?: string;
+      jsonData?: Record<string, any>;
+      // Text input fields (for form-based submission)
+      startupName?: string;
+      description?: string;
+      market?: string;
+      team?: string;
+      traction?: string;
+    }
+  ): Promise<EvaluationResponse> {
+    const FASTAPI_URL = import.meta.env.VITE_FASTAPI_URL || 'http://localhost:8000';
+    
+    try {
+      const formData = new FormData();
+      
+      // Add text fields if provided
+      if (options.startupName) {
+        formData.append('startup_name', options.startupName);
+      }
+      if (options.description) {
+        formData.append('description', options.description);
+      }
+      if (options.market) {
+        formData.append('market', options.market);
+      }
+      if (options.team) {
+        formData.append('team', options.team);
+      }
+      if (options.traction) {
+        formData.append('traction', options.traction);
+      }
+      
+      // Add PDF file (optional)
+      if (options.file) {
+        formData.append('file', options.file);
+      }
+      
+      // Legacy support: URL or JSON data
+      if (options.url) {
+        formData.append('url', options.url);
+      } else if (options.jsonData) {
+        formData.append('json_data', JSON.stringify(options.jsonData));
+      }
+      
+      // Validate at least one input method is provided
+      if (!options.file && !options.url && !options.jsonData && 
+          !options.description && !options.startupName) {
+        throw new Error('Either file, url, jsonData, or text fields (startupName/description) must be provided');
+      }
+
+      const response = await fetch(`${FASTAPI_URL}/evaluate`, {
+        method: 'POST',
+        body: formData,
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        
+        if (errorData.detail) {
+          if (Array.isArray(errorData.detail)) {
+            const errors = errorData.detail.map((err: any) => {
+              const field = err.loc ? err.loc.join('.') : 'unknown';
+              return `${field}: ${err.msg}`;
+            }).join(', ');
+            errorMessage = `Validation error: ${errors}`;
+          } else if (typeof errorData.detail === 'string') {
+            errorMessage = errorData.detail;
+          } else {
+            errorMessage = JSON.stringify(errorData.detail);
+          }
+        }
+        
+        throw new Error(errorMessage);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('FastAPI evaluation request failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Download generated PDF report
+   */
+  async downloadReport(reportId: string): Promise<Blob> {
+    const FASTAPI_URL = import.meta.env.VITE_FASTAPI_URL || 'http://localhost:8000';
+    
+    try {
+      const response = await fetch(`${FASTAPI_URL}/evaluate/reports/${reportId}`, {
+        method: 'GET',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || `Failed to download report: ${response.status}`);
+      }
+
+      return await response.blob();
+    } catch (error) {
+      console.error('Report download failed:', error);
+      throw error;
+    }
+  }
 }
 
 export interface CritiqueResponse {
@@ -281,6 +395,32 @@ export interface CritiqueResponse {
   overall_risk_label: 'low_risk' | 'moderate_risk' | 'high_risk' | 'very_high_risk';
   summary: string;
   analysis_timestamp?: string;
+}
+
+// Unified Evaluation Response
+export interface EvaluationResponse {
+  startup: string;
+  scores: ScoreResponse;
+  critique: CritiqueResponse;
+  narrative: {
+    vision: string;
+    differentiation: string;
+    timing: string;
+    tagline: string;
+  };
+  benchmarks: {
+    industry: string;
+    comparisons: Array<{
+      metric: string;
+      startup_value: string | number;
+      sector_avg: string | number;
+      percentile: number;
+      insight: string;
+    }>;
+    overall_position: string;
+    summary: string;
+  };
+  report_url: string;
 }
 
 export const apiService = new ApiService();

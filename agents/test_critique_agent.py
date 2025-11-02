@@ -1,13 +1,12 @@
 """
-Pytest tests for AI Critique Agent
-Tests severity parsing, red flag identification, and database logging
+Pytest tests for Gemini-native Critique Agent
+Tests valid JSON parsing, 3-5 red flags validation, and Pydantic schema
 """
 import pytest
 import os
 import sys
 import json
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch, MagicMock
 
 # Add agents directory to path
 agents_dir = os.path.dirname(os.path.abspath(__file__))
@@ -15,315 +14,322 @@ sys.path.insert(0, agents_dir)
 
 from critique_agent import (
     analyze_critique,
-    normalize_critique_response,
-    generate_fallback_critique,
-    save_critique_to_db,
-    SeverityLevel,
-    RiskLabel
+    critique_with_logging,
+    log_to_database,
+    CritiqueResponse,
+    RedFlag,
+    Severity,
+    RiskLevel
 )
 
 
 @pytest.fixture
 def sample_score_report():
-    """Sample scoring report for testing"""
+    """Sample scoring report from scoring_agent"""
     return {
-        "overall_score": 6.5,
+        "startup_name": "Test Startup",
+        "venture_lens_score": 7.5,
         "breakdown": {
-            "qualitative_assessment": {
-                "idea": {
-                    "score": 7,
-                    "assessment": "Strong idea",
-                    "strengths": ["Innovative approach"],
-                    "concerns": ["Market validation needed"]
-                },
-                "team": {
-                    "score": 5,
-                    "assessment": "Decent team",
-                    "strengths": ["Technical expertise"],
-                    "concerns": ["Lack of business experience"]
-                },
-                "traction": {
-                    "score": 4,
-                    "assessment": "Limited traction",
-                    "strengths": [],
-                    "concerns": ["Low user growth", "No revenue"]
-                },
-                "market": {
-                    "score": 8,
-                    "assessment": "Large market",
-                    "strengths": ["TAM is significant"],
-                    "concerns": []
-                }
-            }
-        },
-        "recommendation": "Moderate investment potential"
-    }
-
-
-@pytest.fixture
-def sample_pitchdeck_summary():
-    """Sample pitch deck summary for testing"""
-    return {
-        "total_slides": 12,
-        "missing_slides_report": "Potentially missing key slides: Financial Projections",
-        "overall_summary": "Complete pitch deck with minor gaps"
-    }
-
-
-@pytest.fixture
-def sample_low_score_report():
-    """Low scoring report for testing critical flags"""
-    return {
-        "overall_score": 3.2,
-        "breakdown": {
-            "qualitative_assessment": {
-                "idea": {"score": 2, "concerns": ["Vague concept"]},
-                "team": {"score": 3, "concerns": ["Incomplete team"]},
-                "traction": {"score": 2, "concerns": ["No users"]},
-                "market": {"score": 5, "concerns": []}
+            "market": {
+                "score": 15.5,
+                "reasoning": "Large market opportunity"
+            },
+            "product": {
+                "score": 14.0,
+                "reasoning": "Innovative solution"
+            },
+            "team": {
+                "score": 12.0,
+                "reasoning": "Experienced team but missing key roles"
+            },
+            "traction": {
+                "score": 10.0,
+                "reasoning": "Early traction but revenue still low"
+            },
+            "risk": {
+                "score": 13.0,
+                "reasoning": "Moderate risk factors"
             }
         }
     }
 
 
-def test_normalize_critique_response_valid():
-    """Test normalizing valid critique response"""
-    valid_response = {
+@pytest.fixture
+def sample_pitchdeck_summary():
+    """Sample pitch deck summary text"""
+    return "This is a fintech startup focused on payment solutions. The pitch deck covers problem, solution, and market opportunity, but lacks detailed financial projections and competitive analysis."
+
+
+@pytest.fixture
+def valid_critique_response():
+    """Valid critique response JSON"""
+    return {
         "red_flags": [
             {
-                "flag": "Low traction score",
-                "severity": "high",
-                "explanation": "Only 4/10 in traction indicates weak product-market fit",
-                "category": "traction"
+                "issue": "Low traction score (10.0/20) indicates weak product-market fit",
+                "severity": "Medium",
+                "reason": "Early traction is limited with low revenue, suggesting market validation is incomplete"
             },
             {
-                "flag": "Missing financial projections",
-                "severity": "medium",
-                "explanation": "Pitch deck lacks financial projections",
-                "category": "financial"
-            }
-        ],
-        "overall_risk_label": "moderate_risk",
-        "summary": "Several areas of concern identified"
-    }
-    
-    result = normalize_critique_response(valid_response)
-    
-    assert "red_flags" in result
-    assert len(result["red_flags"]) == 2
-    assert result["red_flags"][0]["severity"] == "high"
-    assert result["red_flags"][0]["category"] == "traction"
-    assert result["overall_risk_label"] == "moderate_risk"
-    assert "analysis_timestamp" in result
-
-
-def test_normalize_critique_response_invalid_severity():
-    """Test normalizing response with invalid severity"""
-    invalid_response = {
-        "red_flags": [
+                "issue": "Team missing key business roles",
+                "severity": "Low",
+                "reason": "Technical team is strong but lacks business development expertise"
+            },
             {
-                "flag": "Test flag",
-                "severity": "invalid_severity",
-                "explanation": "Test",
-                "category": "other"
+                "issue": "Pitch deck lacks financial projections",
+                "severity": "Medium",
+                "reason": "Missing financial forecasts makes it difficult to assess business model viability"
+            },
+            {
+                "issue": "Competitive analysis incomplete",
+                "severity": "Low",
+                "reason": "Limited understanding of competitive landscape could indicate market research gaps"
             }
         ],
-        "overall_risk_label": "invalid_risk"
+        "overall_risk_level": "Moderate",
+        "summary": "The startup shows promise in market opportunity and product innovation, but faces challenges in traction and team completeness. The moderate risk level reflects both strengths and areas requiring attention before investment consideration."
     }
-    
-    result = normalize_critique_response(invalid_response)
-    
-    assert result["red_flags"][0]["severity"] == "medium"  # Should default to medium
-    assert result["overall_risk_label"] in ["low_risk", "moderate_risk", "high_risk", "very_high_risk"]
 
 
-def test_normalize_critique_response_more_than_5_flags():
-    """Test that more than 5 flags are limited to top 5"""
-    many_flags = {
-        "red_flags": [
-            {"flag": f"Flag {i}", "severity": "low", "explanation": "", "category": "other"}
-            for i in range(10)
+def test_red_flag_model():
+    """Test RedFlag Pydantic model"""
+    flag = RedFlag(
+        issue="Test issue",
+        severity=Severity.HIGH,
+        reason="Test reason"
+    )
+    
+    assert flag.issue == "Test issue"
+    assert flag.severity == Severity.HIGH
+    assert flag.reason == "Test reason"
+
+
+def test_critique_response_model_valid():
+    """Test CritiqueResponse with valid 3-5 red flags"""
+    response = CritiqueResponse(
+        red_flags=[
+            RedFlag(issue="Issue 1", severity=Severity.LOW, reason="Reason 1"),
+            RedFlag(issue="Issue 2", severity=Severity.MEDIUM, reason="Reason 2"),
+            RedFlag(issue="Issue 3", severity=Severity.HIGH, reason="Reason 3")
         ],
-        "overall_risk_label": "high_risk"
-    }
+        overall_risk_level=RiskLevel.MODERATE,
+        summary="Test summary"
+    )
     
-    result = normalize_critique_response(many_flags)
-    
-    assert len(result["red_flags"]) <= 5
+    assert len(response.red_flags) == 3
+    assert response.overall_risk_level == RiskLevel.MODERATE
 
 
-def test_normalize_critique_response_infers_risk_from_severity():
-    """Test that risk label is inferred from flag severities"""
-    critical_flags = {
-        "red_flags": [
-            {"flag": "Critical issue", "severity": "critical", "explanation": "", "category": "other"}
-        ],
-        "overall_risk_label": "invalid"
-    }
-    
-    result = normalize_critique_response(critical_flags)
-    
-    assert result["overall_risk_label"] == "very_high_risk"
-    
-    high_flags = {
-        "red_flags": [
-            {"flag": "High issue", "severity": "high", "explanation": "", "category": "other"}
-        ],
-        "overall_risk_label": "invalid"
-    }
-    
-    result = normalize_critique_response(high_flags)
-    assert result["overall_risk_label"] == "high_risk"
+def test_critique_response_model_too_few():
+    """Test CritiqueResponse validation fails with < 3 red flags"""
+    with pytest.raises(ValueError, match="Must have 3-5 red flags"):
+        CritiqueResponse(
+            red_flags=[
+                RedFlag(issue="Issue 1", severity=Severity.LOW, reason="Reason 1"),
+                RedFlag(issue="Issue 2", severity=Severity.MEDIUM, reason="Reason 2")
+            ],
+            overall_risk_level=RiskLevel.LOW,
+            summary="Test"
+        )
 
 
-def test_generate_fallback_critique_low_score(sample_low_score_report, sample_pitchdeck_summary):
-    """Test fallback critique generation for low scores"""
-    result = generate_fallback_critique(sample_low_score_report, sample_pitchdeck_summary)
-    
-    assert "red_flags" in result
-    assert len(result["red_flags"]) > 0
-    assert any("low" in f["flag"].lower() or "score" in f["flag"].lower() for f in result["red_flags"])
-    assert "overall_risk_label" in result
-    assert result["overall_risk_label"] in ["low_risk", "moderate_risk", "high_risk", "very_high_risk"]
+def test_critique_response_model_too_many():
+    """Test CritiqueResponse validation fails with > 5 red flags"""
+    with pytest.raises(ValueError, match="Must have 3-5 red flags"):
+        CritiqueResponse(
+            red_flags=[
+                RedFlag(issue=f"Issue {i}", severity=Severity.LOW, reason=f"Reason {i}")
+                for i in range(6)
+            ],
+            overall_risk_level=RiskLevel.HIGH,
+            summary="Test"
+        )
 
 
-def test_generate_fallback_critique_missing_slides(sample_score_report):
-    """Test fallback critique for missing pitch deck slides"""
-    pitchdeck_with_missing = {
-        "missing_slides_report": "Potentially missing key slides: Financial Projections, Team"
-    }
-    
-    result = generate_fallback_critique(sample_score_report, pitchdeck_with_missing)
-    
-    assert any("incomplete" in f["flag"].lower() or "missing" in f["flag"].lower() 
-               for f in result["red_flags"])
+def test_severity_enum():
+    """Test Severity enum values"""
+    assert Severity.LOW.value == "Low"
+    assert Severity.MEDIUM.value == "Medium"
+    assert Severity.HIGH.value == "High"
+
+
+def test_risk_level_enum():
+    """Test RiskLevel enum values"""
+    assert RiskLevel.LOW.value == "Low"
+    assert RiskLevel.MODERATE.value == "Moderate"
+    assert RiskLevel.HIGH.value == "High"
 
 
 @pytest.mark.asyncio
-async def test_analyze_critique_with_mock_llm(sample_score_report, sample_pitchdeck_summary):
-    """Test critique analysis with mocked LLM"""
-    mock_response = {
-        "red_flags": [
-            {
-                "flag": "Low traction",
-                "severity": "high",
-                "explanation": "Limited user growth",
-                "category": "traction"
-            }
-        ],
-        "overall_risk_label": "moderate_risk",
-        "summary": "Several concerns identified"
-    }
+async def test_analyze_critique_valid_json(sample_score_report, sample_pitchdeck_summary, valid_critique_response):
+    """Test that analyze_critique returns valid JSON with 3-5 red flags"""
     
-    with patch('critique_agent.llm_service') as mock_llm:
-        mock_llm.invoke = AsyncMock(return_value=json.dumps(mock_response))
-        
+    # Mock the LLM service
+    mock_service = MagicMock()
+    mock_service.invoke = MagicMock(return_value=json.dumps(valid_critique_response))
+    
+    with patch('critique_agent.get_service', return_value=mock_service):
         result = await analyze_critique(sample_score_report, sample_pitchdeck_summary)
-        
-        assert "red_flags" in result
-        assert len(result["red_flags"]) >= 1
-        assert result["red_flags"][0]["severity"] in ["low", "medium", "high", "critical"]
-        assert "overall_risk_label" in result
-
-
-@pytest.mark.asyncio
-async def test_analyze_critique_fallback_on_error(sample_score_report, sample_pitchdeck_summary):
-    """Test that fallback critique is used when LLM fails"""
-    with patch('critique_agent.llm_service') as mock_llm:
-        mock_llm.invoke = AsyncMock(side_effect=Exception("LLM error"))
-        
-        result = await analyze_critique(sample_score_report, sample_pitchdeck_summary)
-        
-        # Should still return a valid critique structure
-        assert "red_flags" in result
-        assert "overall_risk_label" in result
-        assert isinstance(result["red_flags"], list)
-
-
-@pytest.mark.asyncio
-async def test_save_critique_to_db_asyncpg():
-    """Test saving critique to database with asyncpg"""
-    mock_connection = AsyncMock()
-    mock_connection.execute = AsyncMock()
     
-    critique_result = {
+    # Verify structure
+    assert "red_flags" in result
+    assert isinstance(result["red_flags"], list)
+    assert 3 <= len(result["red_flags"]) <= 5
+    
+    # Verify each red flag has required fields
+    for flag in result["red_flags"]:
+        assert "issue" in flag
+        assert "severity" in flag
+        assert "reason" in flag
+        assert flag["severity"] in ["Low", "Medium", "High"]
+    
+    # Verify overall risk level
+    assert "overall_risk_level" in result
+    assert result["overall_risk_level"] in ["Low", "Moderate", "High"]
+    
+    # Verify summary
+    assert "summary" in result
+    assert isinstance(result["summary"], str)
+    assert len(result["summary"]) > 0
+
+
+@pytest.mark.asyncio
+async def test_analyze_critique_exactly_3_flags(sample_score_report, sample_pitchdeck_summary):
+    """Test that exactly 3 red flags are valid"""
+    response_3_flags = {
         "red_flags": [
-            {
-                "flag": "Test flag",
-                "severity": "high",
-                "explanation": "Test explanation",
-                "category": "other"
-            }
+            {"issue": "Issue 1", "severity": "Low", "reason": "Reason 1"},
+            {"issue": "Issue 2", "severity": "Medium", "reason": "Reason 2"},
+            {"issue": "Issue 3", "severity": "High", "reason": "Reason 3"}
         ],
-        "overall_risk_label": "high_risk",
+        "overall_risk_level": "Moderate",
         "summary": "Test summary"
     }
     
-    result = await save_critique_to_db("Test Startup", critique_result, mock_connection)
+    mock_service = MagicMock()
+    mock_service.invoke = MagicMock(return_value=json.dumps(response_3_flags))
     
-    assert result is True
-    # Verify execute was called (at least for CREATE TABLE + INSERT)
-    assert mock_connection.execute.call_count >= 2
+    with patch('critique_agent.get_service', return_value=mock_service):
+        result = await analyze_critique(sample_score_report, sample_pitchdeck_summary)
+    
+    assert len(result["red_flags"]) == 3
 
 
 @pytest.mark.asyncio
-async def test_save_critique_to_db_psycopg2():
-    """Test saving critique to database with psycopg2"""
-    mock_connection = MagicMock()
-    mock_cursor = MagicMock()
-    mock_connection.cursor.return_value = mock_cursor
-    
-    critique_result = {
+async def test_analyze_critique_exactly_5_flags(sample_score_report, sample_pitchdeck_summary):
+    """Test that exactly 5 red flags are valid"""
+    response_5_flags = {
         "red_flags": [
-            {
-                "flag": "Test flag",
-                "severity": "medium",
-                "explanation": "Test",
-                "category": "other"
-            }
+            {"issue": f"Issue {i}", "severity": "Low", "reason": f"Reason {i}"}
+            for i in range(5)
         ],
-        "overall_risk_label": "moderate_risk",
-        "summary": "Test"
+        "overall_risk_level": "High",
+        "summary": "Test summary"
     }
     
-    result = await save_critique_to_db("Test Startup", critique_result, mock_connection)
+    mock_service = MagicMock()
+    mock_service.invoke = MagicMock(return_value=json.dumps(response_5_flags))
     
-    # Should work with psycopg2 connection
-    assert mock_connection.cursor.called
-    assert mock_cursor.execute.called
-    assert mock_connection.commit.called or result is False  # May fail gracefully
-
-
-def test_severity_level_enum():
-    """Test SeverityLevel enum values"""
-    assert SeverityLevel.LOW.value == "low"
-    assert SeverityLevel.MEDIUM.value == "medium"
-    assert SeverityLevel.HIGH.value == "high"
-    assert SeverityLevel.CRITICAL.value == "critical"
-
-
-def test_risk_label_enum():
-    """Test RiskLabel enum values"""
-    assert RiskLabel.LOW_RISK.value == "low_risk"
-    assert RiskLabel.MODERATE_RISK.value == "moderate_risk"
-    assert RiskLabel.HIGH_RISK.value == "high_risk"
-    assert RiskLabel.VERY_HIGH_RISK.value == "very_high_risk"
+    with patch('critique_agent.get_service', return_value=mock_service):
+        result = await analyze_critique(sample_score_report, sample_pitchdeck_summary)
+    
+    assert len(result["red_flags"]) == 5
 
 
 @pytest.mark.asyncio
-async def test_critique_with_empty_inputs():
-    """Test critique with empty or minimal inputs"""
-    empty_score = {}
-    empty_summary = {}
+async def test_analyze_critique_invalid_json_raises_error(sample_score_report, sample_pitchdeck_summary):
+    """Test that invalid JSON raises an error"""
+    mock_service = MagicMock()
+    mock_service.invoke = MagicMock(return_value="Invalid JSON content")
     
-    result = await analyze_critique(empty_score, empty_summary)
+    with patch('critique_agent.get_service', return_value=mock_service):
+        with pytest.raises(Exception, match="Failed to parse JSON"):
+            await analyze_critique(sample_score_report, sample_pitchdeck_summary)
+
+
+@pytest.mark.asyncio
+async def test_analyze_critique_invalid_schema_raises_error(sample_score_report, sample_pitchdeck_summary):
+    """Test that invalid schema (missing fields) raises validation error"""
+    invalid_response = {
+        "red_flags": [
+            {"issue": "Issue 1"}  # Missing severity and reason
+        ],
+        "overall_risk_level": "Moderate"
+        # Missing summary
+    }
     
-    # Should still return valid structure
-    assert "red_flags" in result
-    assert "overall_risk_label" in result
-    assert isinstance(result["red_flags"], list)
+    mock_service = MagicMock()
+    mock_service.invoke = MagicMock(return_value=json.dumps(invalid_response))
+    
+    with patch('critique_agent.get_service', return_value=mock_service):
+        with pytest.raises(Exception, match="Response validation failed"):
+            await analyze_critique(sample_score_report, sample_pitchdeck_summary)
+
+
+@pytest.mark.asyncio
+async def test_log_to_database_success():
+    """Test successful database logging"""
+    mock_conn = MagicMock()
+    mock_conn.execute = MagicMock()
+    
+    # Mock async close method
+    async def mock_close():
+        pass
+    mock_conn.close = mock_close
+    
+    with patch('critique_agent.asyncpg') as mock_asyncpg:
+        # Mock asyncpg.connect to return a connection
+        async def mock_connect(url):
+            return mock_conn
+        mock_asyncpg.connect = mock_connect
+        
+        os.environ["DATABASE_URL"] = "postgresql://test:test@localhost/test"
+        
+        result = await log_to_database("startup123", "Moderate", ["Issue 1", "Issue 2"])
+        
+        assert result is True
+        assert mock_conn.execute.call_count >= 2  # CREATE TABLE + INSERT
+
+
+@pytest.mark.asyncio
+async def test_log_to_database_no_config():
+    """Test that logging gracefully handles missing database config"""
+    # Remove database URL if present
+    if "DATABASE_URL" in os.environ:
+        del os.environ["DATABASE_URL"]
+    if "POSTGRES_URL" in os.environ:
+        del os.environ["POSTGRES_URL"]
+    
+    result = await log_to_database("startup123", "Moderate", ["Issue 1"])
+    
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_critique_with_logging(sample_score_report, sample_pitchdeck_summary, valid_critique_response):
+    """Test critique_with_logging combines analysis and database logging"""
+    mock_service = MagicMock()
+    mock_service.invoke = MagicMock(return_value=json.dumps(valid_critique_response))
+    
+    with patch('critique_agent.get_service', return_value=mock_service):
+        with patch('critique_agent.log_to_database', return_value=True) as mock_log:
+            result = await critique_with_logging(
+                sample_score_report,
+                sample_pitchdeck_summary,
+                startup_id="test123"
+            )
+            
+            # Verify critique result
+            assert "red_flags" in result
+            assert len(result["red_flags"]) >= 3
+            
+            # Verify database logging was called
+            mock_log.assert_called_once()
+            call_args = mock_log.call_args
+            assert call_args[0][0] == "test123"
+            assert call_args[0][1] in ["Low", "Moderate", "High"]
+            assert isinstance(call_args[0][2], list)
 
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-
